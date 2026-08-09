@@ -49,6 +49,8 @@ param(
     [double]$WarnGiB = 23.0,
     [int]$IntervalSec = 3,
     [int]$Consecutive = 3,
+    [int]$CounterTimeoutSec = 5,
+    [int]$CounterFailureLimit = 3,
     [string]$StallLogPath = '',
     [int]$StallSec = 300,
     [string]$LogPath = 'C:\AI\vllm\vram_guard.log'
@@ -63,13 +65,49 @@ function Write-Guard([string]$Message) {
 }
 
 function Get-VramGiB {
-    # Total dedicated VRAM on the adapter -- the desktop's share counts too.
+    # Query in a disposable helper process. A GPU reset can wedge Get-Counter
+    # itself; keeping it in the watchdog process would prevent stall cleanup.
+    $counterScript = @'
+$samples = (Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage' -ErrorAction Stop).CounterSamples
+if (-not $samples) { exit 2 }
+$bytes = ($samples | Measure-Object -Property CookedValue -Maximum).Maximum
+[Console]::Out.Write([string]::Format(
+    [Globalization.CultureInfo]::InvariantCulture, '{0:R}', [double]$bytes))
+'@
+    $encoded = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($counterScript)
+    )
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = 'powershell.exe'
+    $startInfo.Arguments = "-NoProfile -EncodedCommand $encoded"
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $helper = New-Object System.Diagnostics.Process
+    $helper.StartInfo = $startInfo
+
     try {
-        $s = (Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage' -ErrorAction Stop).CounterSamples
-        if (-not $s) { return $null }
-        return (($s | Measure-Object -Property CookedValue -Maximum).Maximum / 1GB)
+        if (-not $helper.Start()) { return $null }
+        if (-not $helper.WaitForExit($CounterTimeoutSec * 1000)) {
+            try { $helper.Kill() } catch { }
+            return $null
+        }
+        $raw = $helper.StandardOutput.ReadToEnd().Trim()
+        if ($helper.ExitCode -ne 0 -or -not $raw) { return $null }
+
+        $bytes = 0.0
+        $parsed = [double]::TryParse(
+            $raw,
+            [Globalization.NumberStyles]::Float,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [ref]$bytes
+        )
+        if (-not $parsed) { return $null }
+        return $bytes / 1GB
     }
     catch { return $null }
+    finally { $helper.Dispose() }
 }
 
 function Update-TrackedProcessTree(
@@ -125,7 +163,12 @@ function Stop-Tree(
 }
 
 Write-Guard "=== vram_guard start ==="
-$baseline = Get-VramGiB
+$baseline = $null
+foreach ($attempt in 1..$CounterFailureLimit) {
+    $baseline = Get-VramGiB
+    if ($null -ne $baseline) { break }
+    Write-Guard "WARNING: VRAM counter attempt ${attempt}/${CounterFailureLimit} failed."
+}
 if ($null -eq $baseline) {
     Write-Guard 'ERROR: GPU memory counters unavailable; refusing to launch unguarded.'
     exit 98
@@ -142,6 +185,7 @@ $trackedPids = [System.Collections.Generic.HashSet[int]]::new()
 [void]$trackedPids.Add($proc.Id)
 
 $breaches = 0
+$counterFailures = 0
 $peak = 0.0
 $killed = ''
 $startedAt = Get-Date
@@ -151,7 +195,17 @@ while (-not $proc.HasExited) {
     Update-TrackedProcessTree -TrackedPids $trackedPids
 
     $used = Get-VramGiB
-    if ($null -ne $used) {
+    if ($null -eq $used) {
+        $counterFailures++
+        Write-Guard "VRAM counter unavailable (${counterFailures}/${CounterFailureLimit})"
+        if ($counterFailures -ge $CounterFailureLimit) {
+            $killed = "VRAM counter unavailable for $counterFailures consecutive samples"
+            Stop-Tree -TreePid $proc.Id -Why $killed -TrackedPids $trackedPids
+            break
+        }
+    }
+    else {
+        $counterFailures = 0
         if ($used -gt $peak) { $peak = $used }
         if ($used -ge $LimitGiB) {
             $breaches++
