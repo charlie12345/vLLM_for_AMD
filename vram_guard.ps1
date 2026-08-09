@@ -72,21 +72,63 @@ function Get-VramGiB {
     catch { return $null }
 }
 
-function Stop-Tree([int]$TreePid, [string]$Why) {
+function Update-TrackedProcessTree(
+    [System.Collections.Generic.HashSet[int]]$TrackedPids
+) {
+    try {
+        $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+            Select-Object ProcessId, ParentProcessId)
+        do {
+            $added = $false
+            foreach ($candidate in $processes) {
+                $candidatePid = [int]$candidate.ProcessId
+                $parentPid = [int]$candidate.ParentProcessId
+                if (
+                    $TrackedPids.Contains($parentPid) -and
+                    $TrackedPids.Add($candidatePid)
+                ) {
+                    $added = $true
+                }
+            }
+        } while ($added)
+    }
+    catch {
+        Write-Guard "WARNING: could not refresh child process list: $($_.Exception.Message)"
+    }
+}
+
+function Stop-Tree(
+    [int]$TreePid,
+    [string]$Why,
+    [System.Collections.Generic.HashSet[int]]$TrackedPids
+) {
     Write-Guard "KILLING pid ${TreePid}: $Why"
+
+    # Preserve every descendant PID before terminating the root. EngineCore is
+    # spawned through intermediate processes, and Windows keeps its original
+    # ParentProcessId even if an intermediate parent has already exited.
+    Update-TrackedProcessTree -TrackedPids $TrackedPids
     & taskkill.exe /PID $TreePid /T /F 2>&1 | Out-Null
-    Start-Sleep -Seconds 2
-    # The engine core is a spawned grandchild and outlives a tree kill once the
-    # intermediate shell is gone, so sweep any surviving interpreters.
-    foreach ($p in @(Get-Process python -ErrorAction SilentlyContinue)) {
-        & taskkill.exe /PID $p.Id /T /F 2>&1 | Out-Null
+
+    # A spawned grandchild can outlive taskkill /T after its intermediate
+    # parent exits. Kill only PIDs observed in this run, never unrelated Python
+    # processes on the machine. A second pass catches children racing shutdown.
+    foreach ($pass in 1..2) {
+        Start-Sleep -Seconds 1
+        Update-TrackedProcessTree -TrackedPids $TrackedPids
+        foreach ($trackedPid in (@($TrackedPids) | Sort-Object -Descending)) {
+            if (Get-Process -Id $trackedPid -ErrorAction SilentlyContinue) {
+                & taskkill.exe /PID $trackedPid /T /F 2>&1 | Out-Null
+            }
+        }
     }
 }
 
 Write-Guard "=== vram_guard start ==="
 $baseline = Get-VramGiB
 if ($null -eq $baseline) {
-    Write-Guard 'WARNING: GPU memory counters unavailable - VRAM guard INACTIVE.'
+    Write-Guard 'ERROR: GPU memory counters unavailable; refusing to launch unguarded.'
+    exit 98
 }
 else {
     Write-Guard ('baseline {0:N2} GiB | limit {1:N2} | warn {2:N2}' -f $baseline, $LimitGiB, $WarnGiB)
@@ -96,6 +138,8 @@ Write-Guard "command: $Command"
 
 $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Command -PassThru -WindowStyle Hidden
 Write-Guard "child pid $($proc.Id)"
+$trackedPids = [System.Collections.Generic.HashSet[int]]::new()
+[void]$trackedPids.Add($proc.Id)
 
 $breaches = 0
 $peak = 0.0
@@ -104,6 +148,7 @@ $startedAt = Get-Date
 
 while (-not $proc.HasExited) {
     Start-Sleep -Seconds $IntervalSec
+    Update-TrackedProcessTree -TrackedPids $trackedPids
 
     $used = Get-VramGiB
     if ($null -ne $used) {
@@ -113,7 +158,7 @@ while (-not $proc.HasExited) {
             Write-Guard ('VRAM {0:N2} GiB >= {1:N2} ({2}/{3})' -f $used, $LimitGiB, $breaches, $Consecutive)
             if ($breaches -ge $Consecutive) {
                 $killed = 'VRAM {0:N2} GiB exceeded limit {1:N2} GiB' -f $used, $LimitGiB
-                Stop-Tree -TreePid $proc.Id -Why $killed
+                Stop-Tree -TreePid $proc.Id -Why $killed -TrackedPids $trackedPids
                 break
             }
         }
@@ -128,7 +173,7 @@ while (-not $proc.HasExited) {
         $idle = ((Get-Date) - (Get-Item $StallLogPath).LastWriteTime).TotalSeconds
         if ($idle -ge $StallSec) {
             $killed = 'stalled: no log output for {0:N0}s' -f $idle
-            Stop-Tree -TreePid $proc.Id -Why $killed
+            Stop-Tree -TreePid $proc.Id -Why $killed -TrackedPids $trackedPids
             break
         }
     }
@@ -137,7 +182,7 @@ while (-not $proc.HasExited) {
         $idle = ((Get-Date) - $startedAt).TotalSeconds
         if ($idle -ge $StallSec) {
             $killed = 'stalled: log never created after {0:N0}s' -f $idle
-            Stop-Tree -TreePid $proc.Id -Why $killed
+            Stop-Tree -TreePid $proc.Id -Why $killed -TrackedPids $trackedPids
             break
         }
     }
