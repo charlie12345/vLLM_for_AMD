@@ -81,15 +81,21 @@ def has_precompiled_rust_extensions() -> bool:
 if sys.platform.startswith("darwin") and VLLM_TARGET_DEVICE != "cpu":
     logger.warning("VLLM_TARGET_DEVICE automatically set to `cpu` due to macOS")
     VLLM_TARGET_DEVICE = "cpu"
-elif not (sys.platform.startswith("linux") or sys.platform.startswith("darwin")):
+elif not (
+    sys.platform.startswith("linux")
+    or sys.platform.startswith("darwin")
+    or sys.platform == "win32"
+):
     logger.warning(
-        "vLLM only supports Linux platform (including WSL) and MacOS."
+        "vLLM only supports Linux platform (including WSL), MacOS and Windows."
         "Building on %s, "
         "so vLLM may not be able to run correctly",
         sys.platform,
     )
     VLLM_TARGET_DEVICE = "empty"
-elif sys.platform.startswith("linux") and os.getenv("VLLM_TARGET_DEVICE") is None:
+elif (
+    sys.platform.startswith("linux") or sys.platform == "win32"
+) and os.getenv("VLLM_TARGET_DEVICE") is None:
     if torch.version.hip is not None:
         VLLM_TARGET_DEVICE = "rocm"
         logger.info("Auto-detected ROCm")
@@ -101,6 +107,15 @@ elif sys.platform.startswith("linux") and os.getenv("VLLM_TARGET_DEVICE") is Non
         logger.info("Auto-detected CUDA")
     else:
         VLLM_TARGET_DEVICE = "cpu"
+
+
+def _cmake_path(path: str) -> str:
+    """Normalize a filesystem path for embedding in a cmake argument.
+
+    cmake interprets backslashes as escape sequences, so Windows paths must be
+    passed with forward slashes. No-op on POSIX.
+    """
+    return path.replace("\\", "/")
 
 
 def is_sccache_available() -> bool:
@@ -274,12 +289,22 @@ class cmake_build_ext(build_ext):
             ]
 
         # Pass the python executable to cmake so it can find an exact
-        # match.
-        cmake_args += ["-DVLLM_PYTHON_EXECUTABLE={}".format(sys.executable)]
+        # match. Paths are normalized to forward slashes because cmake treats
+        # backslashes as escape sequences: a Windows path like
+        # `C:\AI\vllm\.venv\Scripts\python.exe` fails to parse with
+        # "Invalid character escape '\A'". Forward slashes work on all
+        # platforms, and this is a no-op on POSIX.
+        cmake_args += [
+            "-DVLLM_PYTHON_EXECUTABLE={}".format(_cmake_path(sys.executable))
+        ]
 
         # Pass the python path to cmake so it can reuse the build dependencies
         # on subsequent calls to python.
-        cmake_args += ["-DVLLM_PYTHON_PATH={}".format(":".join(sys.path))]
+        cmake_args += [
+            "-DVLLM_PYTHON_PATH={}".format(
+                os.pathsep.join(_cmake_path(p) for p in sys.path)
+            )
+        ]
 
         # Override the base directory for FetchContent downloads to $ROOT/.deps
         # This allows sharing dependencies between profiles,
@@ -287,7 +312,7 @@ class cmake_build_ext(build_ext):
         # To override this, set the FETCHCONTENT_BASE_DIR environment variable.
         fc_base_dir = os.path.join(ROOT_DIR, ".deps")
         fc_base_dir = os.environ.get("FETCHCONTENT_BASE_DIR", fc_base_dir)
-        cmake_args += ["-DFETCHCONTENT_BASE_DIR={}".format(fc_base_dir)]
+        cmake_args += ["-DFETCHCONTENT_BASE_DIR={}".format(_cmake_path(fc_base_dir))]
 
         #
         # Setup parallelism and build tool

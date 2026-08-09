@@ -50,7 +50,9 @@ class SamplingStates:
         seed = sampling_params.seed
         self.seeds_set[req_idx] = seed is not None
         if seed is None:
-            seed = np.random.randint(_NP_INT64_MIN, _NP_INT64_MAX)
+            # dtype is required: randint defaults to C long, which is 32-bit
+            # on Windows and rejects these bounds.
+            seed = np.random.randint(_NP_INT64_MIN, _NP_INT64_MAX, dtype=np.int64)
         self.seeds.np[req_idx] = seed
 
         num_logprobs = sampling_params.logprobs

@@ -8,9 +8,49 @@ extern "C" {
 #if defined(__i386__) || defined(__x86_64__)
   #include <cpuid.h>
   #include <x86intrin.h>
+
+// clang refuses to expand the monitorx/mwaitx intrinsics inside a function that
+// was not compiled with the 'mwaitx' target feature, even though every call
+// site is already guarded at runtime by the cpuid check in
+// determine_cpu_support(). GCC accepts them unconditionally. Wrapping them in
+// functions that carry the target attribute keeps the runtime guard as the only
+// thing gating execution, and costs a regular (non-inlined) call.
+  #if defined(__clang__)
+    #define VLLM_MWAITX_TARGET __attribute__((target("mwaitx")))
+  #else
+    #define VLLM_MWAITX_TARGET
+  #endif
+
+VLLM_MWAITX_TARGET static void vllm_monitorx(void* addr, unsigned int extensions,
+                                             unsigned int hints) {
+  _mm_monitorx(addr, extensions, hints);
+}
+
+VLLM_MWAITX_TARGET static void vllm_mwaitx(unsigned int extensions,
+                                           unsigned int hints,
+                                           unsigned int clock) {
+  _mm_mwaitx(extensions, hints, clock);
+}
 #endif
 
-#if defined(CLOCK_MONOTONIC_RAW)
+#if defined(_WIN32)
+// Windows has no clock_gettime(). MSVC's <time.h> does provide struct timespec
+// (C11), so only the monotonic clock itself needs supplying.
+  #include <windows.h>
+
+  #define TIMEOUT_CLOCK 0
+
+static int clock_gettime(int /*clk_id*/, struct timespec* ts) {
+  LARGE_INTEGER freq, ctr;
+  if (!QueryPerformanceFrequency(&freq) || !QueryPerformanceCounter(&ctr)) {
+    return -1;
+  }
+  ts->tv_sec = (time_t)(ctr.QuadPart / freq.QuadPart);
+  ts->tv_nsec =
+      (long)(((ctr.QuadPart % freq.QuadPart) * 1000000000LL) / freq.QuadPart);
+  return 0;
+}
+#elif defined(CLOCK_MONOTONIC_RAW)
   #define TIMEOUT_CLOCK CLOCK_MONOTONIC_RAW
 #else
   #define TIMEOUT_CLOCK CLOCK_MONOTONIC
@@ -126,7 +166,7 @@ static PyObject* method_spinloop(PyObject* self, PyObject* args,
 #if defined(__i386__) || defined(__x86_64__)
     // monitorx + mwaitx with qualified buffer
     if (buffer_qualifies && state->cpu_support == CPU_SUPPORT_MONITORX) {
-      _mm_monitorx(buffer.buf, 0, 0);
+      vllm_monitorx(buffer.buf, 0, 0);
 
       // Check once more in case the buffer has been modified while we were
       // arming the monitor hardware
@@ -146,8 +186,8 @@ static PyObject* method_spinloop(PyObject* self, PyObject* args,
       // Run mwaitx with enabled timeout (bit 1). The actual timeout value
       // is not very important, we just want to ensure we don't lock up
       // here for too long.
-      Py_BEGIN_ALLOW_THREADS _mm_mwaitx((1 << 1), 0,
-                                        MWAITX_DEFAULT_TIMEOUT_CYCLES);
+      Py_BEGIN_ALLOW_THREADS vllm_mwaitx((1 << 1), 0,
+                                         MWAITX_DEFAULT_TIMEOUT_CYCLES);
       Py_END_ALLOW_THREADS
     }
 

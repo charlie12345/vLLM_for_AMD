@@ -23,7 +23,7 @@ from typing import (
 )
 
 import torch
-import uvloop
+from vllm.utils.async_utils import run_async
 from torch.autograd.profiler import record_function
 
 import vllm.envs as envs
@@ -509,7 +509,7 @@ def run_api_server_worker_proc(
     set_process_title("APIServer", str(server_index))
     decorate_logs()
 
-    uvloop.run(
+    run_async(
         run_server_worker(listen_address, sock, args, client_config, **uvicorn_kwargs)
     )
 

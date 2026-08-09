@@ -86,10 +86,24 @@ _maybe_set_cuda_compatibility_path()
 
 import torch
 
+# Must run before anything imports torch.distributed's submodules. Builds
+# without the c10d extension (the ROCm wheels for native Windows) get a
+# single-rank stand-in; every other build is left untouched.
+from vllm.utils.single_process_c10d import install as _install_single_process_c10d
+
+_single_process_c10d = _install_single_process_c10d()
+
 from vllm.logger import init_logger
 from vllm.utils.torch_utils import is_torch_equal, is_torch_equal_or_newer
 
 logger = init_logger(__name__)
+
+if _single_process_c10d:
+    logger.warning(
+        "This PyTorch build has no torch.distributed (c10d) extension, so "
+        "vLLM installed a single-rank stand-in. Only single-GPU execution "
+        "(tensor/pipeline/data parallel size 1) will work."
+    )
 
 # set some common config/environment variables that should be set
 # for all processes created by vllm and all processes

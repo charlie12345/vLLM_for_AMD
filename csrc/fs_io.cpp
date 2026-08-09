@@ -5,8 +5,22 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
+#if defined(_WIN32)
+  #include <io.h>
+  #define access _access
+  #define close _close
+  #define open _open
+  #define read _read
+  #define unlink _unlink
+  #define write _write
+  #ifndef F_OK
+    #define F_OK 0
+  #endif
+#else
+  #include <unistd.h>
+#endif
 
+#include <climits>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -15,6 +29,12 @@
 constexpr int kODirectFlag = O_DIRECT;
 #else
 constexpr int kODirectFlag = 0;
+#endif
+
+#if defined(_WIN32)
+constexpr int kBinaryFlag = O_BINARY;
+#else
+constexpr int kBinaryFlag = 0;
 #endif
 
 extern "C" {
@@ -48,13 +68,21 @@ inline int _store_block(const char* tmp_path, const char* dest_path,
   }
 
   const int o_direct_flag = use_o_direct ? kODirectFlag : 0;
-  const int fd = open(
-      tmp_path, O_CREAT | O_EXCL | O_WRONLY | O_TRUNC | o_direct_flag, 0644);
+  const int fd =
+      open(tmp_path,
+           O_CREAT | O_EXCL | O_WRONLY | O_TRUNC | o_direct_flag | kBinaryFlag,
+           0644);
   if (fd < 0) {
     return errno;
   }
 
-  const ssize_t written = write(fd, src, size);
+  if (size > UINT_MAX) {
+    close(fd);
+    unlink(tmp_path);
+    return EFBIG;
+  }
+
+  const auto written = write(fd, src, static_cast<unsigned int>(size));
   if (written < 0 || static_cast<size_t>(written) != size) {
     const int err = written < 0 ? errno : EIO;
     close(fd);  // Best-effort cleanup; the real error is already captured.
@@ -83,14 +111,20 @@ inline int _store_block(const char* tmp_path, const char* dest_path,
 inline int _load_block(const char* source_path, char* dst, size_t size,
                        bool use_o_direct) {
   const int o_direct_flag = use_o_direct ? kODirectFlag : 0;
-  const int fd = open(source_path, O_RDONLY | o_direct_flag, 0);
+  const int fd = open(source_path, O_RDONLY | o_direct_flag | kBinaryFlag, 0);
   if (fd < 0) {
     const int err = errno;
     unlink(source_path);
     return err;
   }
 
-  const ssize_t bytes_read = read(fd, dst, size);
+  if (size > UINT_MAX) {
+    close(fd);
+    unlink(source_path);
+    return EFBIG;
+  }
+
+  const auto bytes_read = read(fd, dst, static_cast<unsigned int>(size));
   if (bytes_read < 0 || static_cast<size_t>(bytes_read) != size) {
     const int err = bytes_read < 0 ? errno : EIO;
     close(fd);

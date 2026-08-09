@@ -3,6 +3,7 @@
 
 import contextlib
 import os
+import sys
 import threading
 import weakref
 from collections.abc import Callable, Iterator
@@ -1226,14 +1227,33 @@ def wait_for_engine_startup(
         and not parallel_config.data_parallel_external_lb
     )
 
-    if proc_manager is not None:
-        for sentinel in proc_manager.sentinels():
-            poller.register(sentinel, zmq.POLLIN)
-    if coord_process is not None:
-        poller.register(coord_process.sentinel, zmq.POLLIN)
+    # A multiprocessing sentinel is a pipe fd on POSIX, which zmq_poll accepts
+    # alongside sockets. On Windows it is a Win32 event HANDLE, which zmq_poll
+    # rejects outright ("not a socket"), so there we poll the handshake socket
+    # alone and check for dead children between polls instead.
+    poll_sentinels = sys.platform != "win32"
+    if poll_sentinels:
+        if proc_manager is not None:
+            for sentinel in proc_manager.sentinels():
+                poller.register(sentinel, zmq.POLLIN)
+        if coord_process is not None:
+            poller.register(coord_process.sentinel, zmq.POLLIN)
+
+    def finished_procs() -> dict[str, int]:
+        finished = proc_manager.finished_procs() if proc_manager else {}
+        if coord_process is not None and coord_process.exitcode is not None:
+            finished[coord_process.name] = coord_process.exitcode
+        return finished
+
     while any(conn_pending) or any(start_pending):
         events = poller.poll(STARTUP_POLL_PERIOD_MS)
         if not events:
+            if not poll_sentinels and (finished := finished_procs()):
+                raise RuntimeError(
+                    "Engine core initialization failed. "
+                    "See root cause above. "
+                    f"Failed core proc(s): {finished}"
+                )
             if any(conn_pending):
                 logger.debug(
                     "Waiting for %d local, %d remote core engine proc(s) to connect.",
@@ -1247,13 +1267,10 @@ def wait_for_engine_startup(
             continue
         if len(events) > 1 or events[0][0] != handshake_socket:
             # One of the local core processes exited.
-            finished = proc_manager.finished_procs() if proc_manager else {}
-            if coord_process is not None and coord_process.exitcode is not None:
-                finished[coord_process.name] = coord_process.exitcode
             raise RuntimeError(
                 "Engine core initialization failed. "
                 "See root cause above. "
-                f"Failed core proc(s): {finished}"
+                f"Failed core proc(s): {finished_procs()}"
             )
 
         # Receive HELLO and READY messages from the input socket.
