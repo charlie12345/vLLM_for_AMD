@@ -125,6 +125,18 @@ def rocm_platform_plugin() -> str | None:
     except Exception as e:
         logger.debug("ROCm platform is not available because: %s", str(e))
 
+    if not is_rocm:
+        # amdsmi has no Windows build, so fall back to asking torch whether it
+        # is a HIP build that can see a device.
+        try:
+            import torch
+
+            if torch.version.hip is not None and torch.cuda.device_count() > 0:
+                is_rocm = True
+                logger.debug("Confirmed ROCm platform is available via torch.")
+        except Exception as e:
+            logger.debug("ROCm platform is not available via torch because: %s", str(e))
+
     return "vllm.platforms.rocm.RocmPlatform" if is_rocm else None
 
 

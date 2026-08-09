@@ -19,7 +19,7 @@ from multiprocessing.process import BaseProcess
 import aiohttp
 import psutil
 import uvicorn
-import uvloop
+from vllm.utils.async_utils import run_async
 from fastapi import FastAPI, Response
 
 import vllm.envs as envs
@@ -237,7 +237,7 @@ def _build_dp_supervisor_app(supervisor: DPSupervisor) -> FastAPI:
 def _run_python_vllm_dp_server(child_args: argparse.Namespace) -> None:
     from vllm.entrypoints.openai.api_server import run_server
 
-    uvloop.run(run_server(child_args))
+    run_async(run_server(child_args))
 
 
 def _run_rust_vllm_dp_server(child_args: argparse.Namespace) -> None:
@@ -553,4 +553,4 @@ class DPSupervisor:
 
 
 def run_dp_supervisor(args: argparse.Namespace) -> None:
-    uvloop.run(DPSupervisor(args).run())
+    run_async(DPSupervisor(args).run())

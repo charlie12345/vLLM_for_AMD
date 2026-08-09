@@ -3,6 +3,19 @@
 
 #include <cmath>
 
+// The M_* constants are a POSIX extension. MSVC only exposes them when
+// _USE_MATH_DEFINES is defined before <cmath> is first included, which cannot
+// be guaranteed here because the torch headers above pull it in transitively.
+#ifndef M_SQRT1_2
+  #define M_SQRT1_2 0.70710678118654752440
+#endif
+#ifndef M_SQRT2
+  #define M_SQRT2 1.41421356237309504880
+#endif
+#ifndef M_2_SQRTPI
+  #define M_2_SQRTPI 1.12837916709551257390
+#endif
+
 #include "../cuda_compat.h"
 #include "cuda_vec_utils.cuh"
 #include "dispatch_utils.h"

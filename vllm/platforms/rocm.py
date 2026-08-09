@@ -37,8 +37,15 @@ try:
         amdsmi_topo_get_link_type,
         amdsmi_topo_get_numa_node_number,
     )
+
+    AMDSMI_AVAILABLE = True
 except ImportError as e:
     logger.warning("Failed to import from amdsmi with %r", e)
+    # amdsmi has no Windows build. Everything that queries it has a torch
+    # fallback; this flag is what routes callers there instead of tripping
+    # over the missing names.
+    AMDSMI_AVAILABLE = False
+    AmdSmiException = Exception
 
 try:
     import vllm._C  # noqa: F401
@@ -154,6 +161,8 @@ _sync_hip_cuda_env_vars()
 def with_amdsmi_context(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        if not AMDSMI_AVAILABLE:
+            raise RuntimeError("amdsmi is not available on this platform")
         amdsmi_init()
         try:
             return fn(*args, **kwargs)
@@ -194,7 +203,11 @@ def _get_gcn_arch() -> str:
         return _query_gcn_arch_from_amdsmi()
     except Exception as e:
         logger.debug("Failed to get GCN arch via amdsmi: %s", e)
-        logger.warning_once(
+        # Plain warning, not warning_once: this runs at module scope, and
+        # warning_once consults the distributed state, which imports back into
+        # vllm.platforms before it has finished initializing. Once-ness is
+        # already guaranteed here -- _GCN_ARCH is resolved a single time.
+        logger.warning(
             "Failed to get GCN arch via amdsmi, falling back to torch.cuda. "
             "This will initialize CUDA and may cause "
             "issues if CUDA_VISIBLE_DEVICES is not set yet."
@@ -710,8 +723,18 @@ class RocmPlatform(Platform):
         return DeviceCapability(major=major, minor=minor)
 
     @classmethod
-    @with_amdsmi_context
     def is_fully_connected(cls, physical_device_ids: list[int]) -> bool:
+        try:
+            return cls._is_fully_connected_from_amdsmi(physical_device_ids)
+        except Exception as e:
+            logger.debug("Failed to query xgmi topology via amdsmi: %s", e)
+        # A single GPU is trivially fully connected; without topology data we
+        # cannot claim anything stronger.
+        return len(physical_device_ids) <= 1
+
+    @classmethod
+    @with_amdsmi_context
+    def _is_fully_connected_from_amdsmi(cls, physical_device_ids: list[int]) -> bool:
         """
         Query if the set of gpus are fully connected by xgmi (1 hop)
         """
@@ -730,9 +753,17 @@ class RocmPlatform(Platform):
         return True
 
     @classmethod
+    def get_device_name(cls, device_id: int = 0) -> str:
+        try:
+            return cls._get_device_name_from_amdsmi(device_id)
+        except Exception as e:
+            logger.debug("Failed to get device name via amdsmi: %s", e)
+        return torch.cuda.get_device_properties(device_id).name
+
+    @classmethod
     @with_amdsmi_context
     @lru_cache(maxsize=8)
-    def get_device_name(cls, device_id: int = 0) -> str:
+    def _get_device_name_from_amdsmi(cls, device_id: int = 0) -> str:
         physical_device_id = cls.device_id_to_physical_device_id(device_id)
         handle = amdsmi_get_processor_handles()[physical_device_id]
         asic_info = amdsmi_get_gpu_asic_info(handle)
@@ -742,8 +773,16 @@ class RocmPlatform(Platform):
         return asic_info["market_name"]
 
     @classmethod
-    @with_amdsmi_context
     def get_device_uuid(cls, device_id: int = 0) -> str:
+        try:
+            return cls._get_device_uuid_from_amdsmi(device_id)
+        except Exception as e:
+            logger.debug("Failed to get device uuid via amdsmi: %s", e)
+        return ""
+
+    @classmethod
+    @with_amdsmi_context
+    def _get_device_uuid_from_amdsmi(cls, device_id: int = 0) -> str:
         try:
             device = amdsmi_get_processor_handles()[device_id]
         except AmdSmiException as error:
@@ -1039,8 +1078,16 @@ class RocmPlatform(Platform):
         )
 
     @classmethod
-    @with_amdsmi_context
     def get_all_device_numa_nodes(cls) -> list[int] | None:
+        try:
+            return cls._get_all_device_numa_nodes_from_amdsmi()
+        except Exception as e:
+            logger.debug("Failed to get NUMA nodes via amdsmi: %s", e)
+        return None
+
+    @classmethod
+    @with_amdsmi_context
+    def _get_all_device_numa_nodes_from_amdsmi(cls) -> list[int] | None:
         """Get NUMA nodes for all visible GPU devices."""
         try:
             handles = amdsmi_get_processor_handles()

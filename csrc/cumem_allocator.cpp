@@ -3,6 +3,12 @@
 // need to be unsigned long long
 #include <iostream>
 
+#if defined(_WIN32)
+  // ssize_t is POSIX; MSVC only ships the equivalent as SSIZE_T.
+  #include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#endif
+
 #include "cumem_allocator_compat.h"
 
 #ifndef USE_ROCM

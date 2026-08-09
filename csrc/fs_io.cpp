@@ -3,7 +3,17 @@
 
 #include <Python.h>
 
-#include <unistd.h>
+#if defined(_WIN32)
+  // Windows has no <unistd.h>; _access() in <io.h> is the equivalent, and
+  // F_OK (existence check) is simply mode 0.
+  #include <io.h>
+  #define access _access
+  #ifndef F_OK
+    #define F_OK 0
+  #endif
+#else
+  #include <unistd.h>
+#endif
 
 #include <vector>
 

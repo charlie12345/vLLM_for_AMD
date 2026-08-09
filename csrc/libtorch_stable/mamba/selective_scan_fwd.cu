@@ -4,6 +4,13 @@
 #include <torch/csrc/stable/macros.h>
 #include "selective_scan.h"
 
+// M_LOG2E is a POSIX extension. MSVC only exposes it when _USE_MATH_DEFINES is
+// defined before <cmath> is first included, which cannot be guaranteed here
+// because the headers above pull it in transitively.
+#ifndef M_LOG2E
+    #define M_LOG2E 1.44269504088896340736
+#endif
+
 #ifndef USE_ROCM
     #include <cub/block/block_load.cuh>
     #include <cub/block/block_store.cuh>

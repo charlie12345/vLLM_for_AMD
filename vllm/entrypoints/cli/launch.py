@@ -4,7 +4,7 @@
 import argparse
 import signal
 
-import uvloop
+from vllm.utils.async_utils import run_async
 
 from vllm import envs
 from vllm.config import VllmConfig
@@ -54,7 +54,7 @@ class RenderSubcommand(LaunchSubcommandBase):
 
     @staticmethod
     def cmd(args: argparse.Namespace) -> None:
-        uvloop.run(run_launch_fastapi(args))
+        run_async(run_launch_fastapi(args))
 
 
 class LaunchSubcommand(CLISubcommand):

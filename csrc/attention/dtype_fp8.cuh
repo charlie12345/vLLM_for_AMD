@@ -1,7 +1,11 @@
 #pragma once
 
 #include "attention_generic.cuh"
-#include "torch_utils.h"
+// Spelled relative to this file rather than as a bare "torch_utils.h", which
+// relies on the -Icsrc search path. There is a second, unrelated
+// libtorch_stable/torch_utils.h, and MSVC's include-stack search rules find
+// that one first when this header is pulled in from libtorch_stable/.
+#include "../torch_utils.h"
 
 #include <stdint.h>
 #ifdef ENABLE_FP8

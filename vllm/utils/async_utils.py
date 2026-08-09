@@ -20,6 +20,25 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 
+def _resolve_event_loop_runner() -> Callable[..., object]:
+    """Pick the fastest available drop-in for ``asyncio.run``.
+
+    uvloop is POSIX-only; winloop is the same libuv loop packaged for Windows.
+    Plain asyncio is the last resort so a missing accelerator degrades
+    performance rather than breaking startup.
+    """
+    for name in ("uvloop", "winloop"):
+        try:
+            return __import__(name).run
+        except ImportError:
+            continue
+    return asyncio.run
+
+
+run_async = _resolve_event_loop_runner()
+"""Run a coroutine to completion on the fastest event loop available."""
+
+
 def cancel_task_threadsafe(task: Task):
     if task and not task.done():
         run_in_loop(task.get_loop(), task.cancel)
