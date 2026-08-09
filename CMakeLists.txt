@@ -52,9 +52,16 @@ set(PYTHON_SUPPORTED_VERSIONS "3.10" "3.11" "3.12" "3.13" "3.14")
 set(HIP_SUPPORTED_ARCHS "gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1250;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201")
 
 # ROCm installation prefix. Default to /opt/rocm but allow override via
-# -DROCM_PATH=/your/rocm/path when invoking cmake.
+# -DROCM_PATH=/your/rocm/path when invoking cmake, or via the ROCM_PATH
+# environment variable. The env var matters on Windows, where ROCm ships as
+# pip wheels (rocm-sdk-devel) with no fixed install location.
 if(NOT DEFINED ROCM_PATH)
-  set(ROCM_PATH "/opt/rocm" CACHE PATH "ROCm installation prefix")
+  if(DEFINED ENV{ROCM_PATH})
+    file(TO_CMAKE_PATH "$ENV{ROCM_PATH}" _VLLM_ENV_ROCM_PATH)
+    set(ROCM_PATH "${_VLLM_ENV_ROCM_PATH}" CACHE PATH "ROCm installation prefix")
+  else()
+    set(ROCM_PATH "/opt/rocm" CACHE PATH "ROCm installation prefix")
+  endif()
 else()
   set(ROCM_PATH ${ROCM_PATH} CACHE PATH "ROCm installation prefix" FORCE)
 endif()

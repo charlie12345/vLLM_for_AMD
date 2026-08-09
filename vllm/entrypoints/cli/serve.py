@@ -5,7 +5,7 @@ import argparse
 import signal
 import time
 
-import uvloop
+from vllm.utils.async_utils import run_async
 
 import vllm
 import vllm.envs as envs
@@ -55,7 +55,7 @@ class ServeSubcommand(CLISubcommand):
         if getattr(args, "grpc", False):
             from vllm.entrypoints.grpc_server import serve_grpc
 
-            uvloop.run(serve_grpc(args))
+            run_async(serve_grpc(args))
             return
 
         rust_frontend_path = (
@@ -149,7 +149,7 @@ class ServeSubcommand(CLISubcommand):
         else:
             # Single API server (this process).
             args.api_server_count = None
-            uvloop.run(run_server(args))
+            run_async(run_server(args))
 
     def validate(self, args: argparse.Namespace) -> None:
         validate_parsed_serve_args(args)

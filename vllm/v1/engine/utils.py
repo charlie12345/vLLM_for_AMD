@@ -3,6 +3,7 @@
 
 import contextlib
 import os
+import sys
 import threading
 import weakref
 from collections.abc import Callable, Iterator, Sequence
@@ -1234,24 +1235,83 @@ def wait_for_engine_startup(
         and not parallel_config.data_parallel_external_lb
     )
 
-    # 1. Engine processes
-    if isinstance(launch.engine_manager, CoreEngineProcManager):
-        for sentinel in launch.engine_manager.sentinels():
-            poller.register(sentinel, zmq.POLLIN)
-    # 2. DP Coordinator process, if present
     coord_process = launch.coordinator.proc if launch.coordinator else None
-    if coord_process is not None:
-        poller.register(coord_process.sentinel, zmq.POLLIN)
-    # 3. Watched frontend processes, if any
     frontend_process_by_fd: dict[int, FrontendProcess] = {}
-    for proc in launch.watched_frontend_processes:
-        fd = proc.sentinel if isinstance(proc.sentinel, int) else proc.sentinel.fileno()
-        frontend_process_by_fd[fd] = proc
-        poller.register(fd, zmq.POLLIN)
+
+    # A multiprocessing sentinel is a pipe fd on POSIX, which zmq_poll accepts
+    # alongside sockets. On Windows it is a Win32 event HANDLE, which zmq_poll
+    # rejects outright ("not a socket"), so there we poll the handshake socket
+    # alone and check for dead children between polls instead.
+    poll_sentinels = sys.platform != "win32"
+    if poll_sentinels:
+        if isinstance(launch.engine_manager, CoreEngineProcManager):
+            for sentinel in launch.engine_manager.sentinels():
+                poller.register(sentinel, zmq.POLLIN)
+        if coord_process is not None:
+            poller.register(coord_process.sentinel, zmq.POLLIN)
+        for proc in launch.watched_frontend_processes:
+            sentinel = proc.sentinel
+            fd = sentinel if isinstance(sentinel, int) else sentinel.fileno()
+            frontend_process_by_fd[fd] = proc
+            poller.register(fd, zmq.POLLIN)
+
+    def finished_procs() -> dict[str, int]:
+        finished = (
+            launch.engine_manager.finished_procs()
+            if isinstance(launch.engine_manager, CoreEngineProcManager)
+            else {}
+        )
+        if coord_process is not None and coord_process.exitcode is not None:
+            finished[coord_process.name] = coord_process.exitcode
+        return finished
+
+    def failed_frontend_procs(
+        events: list[tuple[zmq.Socket | int, int]] | None = None,
+    ) -> dict[str, int | None]:
+        event_fds = {event_fd for event_fd, _ in events or ()}
+        return {
+            proc.name: proc.exitcode
+            for fd, proc in frontend_process_by_fd.items()
+            if proc.exitcode is not None or fd in event_fds
+        } | {
+            proc.name: proc.exitcode
+            for proc in launch.watched_frontend_processes
+            if proc.exitcode is not None
+        }
+
+    def raise_startup_failure(
+        events: list[tuple[zmq.Socket | int, int]] | None = None,
+    ) -> None:
+        finished = finished_procs()
+        failed_frontends = failed_frontend_procs(events)
+        if failed_frontends and not finished:
+            raise RuntimeError(
+                "Frontend process failed during engine core initialization. "
+                "See root cause above. "
+                f"Failed frontend proc(s): {failed_frontends}"
+            )
+        raise RuntimeError(
+            "Engine core initialization failed. "
+            "See root cause above. "
+            f"Failed core proc(s): {finished}"
+            + (
+                f", failed frontend proc(s): {failed_frontends}"
+                if failed_frontends
+                else ""
+            )
+        )
 
     while any(conn_pending) or any(start_pending):
         events = poller.poll(STARTUP_POLL_PERIOD_MS)
         if not events:
+            if not poll_sentinels and (
+                finished_procs()
+                or any(
+                    proc.exitcode is not None
+                    for proc in launch.watched_frontend_processes
+                )
+            ):
+                raise_startup_failure()
             if any(conn_pending):
                 logger.debug(
                     "Waiting for %d local, %d remote core engine proc(s) to connect.",
@@ -1264,35 +1324,7 @@ def wait_for_engine_startup(
                 )
             continue
         if len(events) > 1 or events[0][0] != handshake_socket:
-            # One of the local core, coordinator, or watched frontend processes exited.
-            if isinstance(launch.engine_manager, CoreEngineProcManager):
-                finished = launch.engine_manager.finished_procs()
-            else:
-                finished = {}
-            if coord_process is not None and coord_process.exitcode is not None:
-                finished[coord_process.name] = coord_process.exitcode
-            failed_frontend_procs = {
-                proc.name: proc.exitcode
-                for fd, proc in frontend_process_by_fd.items()
-                if proc.exitcode is not None
-                or any(event_fd == fd for event_fd, _ in events)
-            }
-            if failed_frontend_procs and not finished:
-                raise RuntimeError(
-                    "Frontend process failed during engine core initialization. "
-                    "See root cause above. "
-                    f"Failed frontend proc(s): {failed_frontend_procs}"
-                )
-            raise RuntimeError(
-                "Engine core initialization failed. "
-                "See root cause above. "
-                f"Failed core proc(s): {finished}"
-                + (
-                    f", failed frontend proc(s): {failed_frontend_procs}"
-                    if failed_frontend_procs
-                    else ""
-                )
-            )
+            raise_startup_failure(events)
 
         # Receive HELLO and READY messages from the input socket.
         eng_identity, ready_msg_bytes = handshake_socket.recv_multipart()

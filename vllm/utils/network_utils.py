@@ -155,6 +155,11 @@ def get_tcp_uri(ip: str, port: int) -> str:
 
 
 def get_open_zmq_ipc_path() -> str:
+    if sys.platform == "win32":
+        # ZeroMQ's ipc:// transport is backed by a Unix domain socket and is
+        # not implemented on Windows. Loopback TCP is the portable equivalent;
+        # the traffic never leaves the host either way.
+        return f"tcp://127.0.0.1:{get_open_port()}"
     base_rpc_path = envs.VLLM_RPC_BASE_PATH
     return f"ipc://{base_rpc_path}/{uuid4()}"
 
