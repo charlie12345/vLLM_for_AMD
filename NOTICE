@@ -1,0 +1,21 @@
+vLLM for AMD on Native Windows
+
+This distribution is based on the vLLM project:
+https://github.com/vllm-project/vllm
+
+Upstream base: vLLM v0.26.0, commit 568afb3
+
+vLLM and this modified source distribution are provided under the Apache
+License, Version 2.0. See the LICENSE file in this repository.
+
+The native-Windows AMD changes include build-system portability, Windows
+process and networking compatibility, a single-rank distributed stand-in for
+Windows ROCm PyTorch, ROCm device-detection fallbacks, Windows launchers, and a
+dedicated-VRAM/stall watchdog. Modified files retain their upstream copyright
+and SPDX notices where present.
+
+This is a community-maintained fork.
+
+ROCm, PyTorch, Triton, Hugging Face models, and other third-party dependencies
+are separate works distributed under their respective licenses and notices.
+They are not relicensed by this repository's Apache-2.0 license.
