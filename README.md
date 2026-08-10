@@ -186,6 +186,32 @@ Set-Location C:\AI\vllm
 
 A short path matters when Torch/Inductor generates deeply nested cache names.
 
+### Automated setup (recommended)
+
+After installing the system tools and cloning the repository, run the
+repository-local setup from PowerShell:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\setup_windows_rocm.ps1 -PlanOnly
+.\setup_windows_rocm.ps1
+```
+
+`-PlanOnly` checks Windows, the AMD adapter, Git, `uv`, Visual Studio, system
+RAM, disk headroom, and repository files without installing packages, opening a
+GPU context, or building anything. The full run then:
+
+1. Creates or reuses `.venv211` with Python 3.12.
+2. Installs the exact ROCm 7.13, PyTorch 2.11, and Triton packages below.
+3. Verifies Torch/HIP and requires `gfx1201` through the fail-closed VRAM guard.
+4. Builds and editable-installs the native Windows ROCm extensions.
+5. Runs a second guarded vLLM import and device verification.
+
+The script never downloads or launches a model. It does not silently install or
+update the AMD driver, Visual Studio, Git, or `uv`; review and install those
+system-wide prerequisites yourself. The manual commands below remain available
+for troubleshooting and auditing the automated process.
+
 ### 3. Create the serving environment
 
 ```powershell
@@ -585,6 +611,7 @@ VRAM, and throughput tests.
 
 | File | Purpose |
 | --- | --- |
+| `setup_windows_rocm.ps1` | Checks prerequisites, installs the pinned environment, runs guarded GPU probes, builds, and verifies the fork. |
 | `env_windows_rocm.cmd` | Shared Visual Studio, ROCm, compiler, and architecture environment. |
 | `build_windows_rocm.cmd` | Builds vLLM's C++/HIP extensions in place. |
 | `install_windows_rocm.cmd` | Installs this source tree into `.venv211` without replacing ROCm Torch. |
