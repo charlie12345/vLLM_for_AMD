@@ -4,7 +4,8 @@
 
 Run this script through ``vram_guard.ps1`` on Windows. Channelwise mode mirrors
 vLLM's unfused per-token/per-channel fallback; rowwise mode exercises the fused
-hipBLASLt path that produces bf16 directly.
+hipBLASLt path that produces bf16 directly; Triton mode exercises vLLM's
+compressed-tensors scaled-MM kernel and checks it against channelwise output.
 """
 
 import argparse
@@ -23,6 +24,19 @@ def make_operands(m: int, n: int, k: int):
 
 
 def scaled_mm(mode: str, a, b, scale_a, scale_b):
+    if mode == "triton":
+        from vllm.model_executor.layers.quantization.compressed_tensors.triton_scaled_mm import (  # noqa: E501
+            triton_scaled_mm,
+        )
+
+        return triton_scaled_mm(
+            a,
+            b,
+            scale_a=scale_a,
+            scale_b=scale_b.t(),
+            out_dtype=torch.bfloat16,
+        )
+
     if mode == "rowwise":
         return torch._scaled_mm(
             a,
@@ -45,7 +59,9 @@ def scaled_mm(mode: str, a, b, scale_a, scale_b):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("channelwise", "rowwise"), required=True)
+    parser.add_argument(
+        "--mode", choices=("channelwise", "rowwise", "triton"), required=True
+    )
     parser.add_argument("--m", type=int, default=64)
     parser.add_argument("--n", type=int, default=4096)
     parser.add_argument("--k", type=int, default=4096)
@@ -82,6 +98,9 @@ def main() -> None:
     elapsed = time.perf_counter() - start
 
     torch.testing.assert_close(graph_output, eager_output, rtol=1e-2, atol=1e-2)
+    if args.mode == "triton":
+        reference = scaled_mm("channelwise", a, b, scale_a, scale_b)
+        torch.testing.assert_close(eager_output, reference, rtol=2e-2, atol=1e-1)
     tflops = 2 * args.m * args.n * args.k * args.replays / elapsed / 1e12
     print(f"PASS: {elapsed / args.replays * 1e3:.3f} ms, {tflops:.2f} TFLOPS")
 
