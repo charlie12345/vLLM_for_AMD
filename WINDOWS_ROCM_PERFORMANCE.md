@@ -1,9 +1,9 @@
 # Native Windows ROCm performance notes
 
-These results are for a Radeon AI PRO R9700 (gfx1201, 32 GiB), ROCm 7.1,
-PyTorch 2.11, and Qwen3 at a maximum model length of 2,048. The GPU also drives
-the desktop. Every model run below used `vram_guard.ps1` with a 26 GiB hard
-limit and a per-run stall log.
+These results are for a Radeon AI PRO R9700 (gfx1201, 32 GiB), ROCm 7.13.0,
+PyTorch 2.11, and models at a maximum model length of 2,048. The GPU also
+drives the desktop. Every model run below used `vram_guard.ps1` with a 26 GiB
+hard limit and a per-run stall log.
 
 ## Recommended configurations
 
@@ -37,6 +37,36 @@ peaked at 24.11 GiB.
 FP8 KV cache can affect output quality when the model does not provide tuned
 KV scales. These are throughput results, not an accuracy evaluation. Run the
 model's task evaluation before making FP8 KV the production default.
+
+### Larger model without a GGUF plugin
+
+`openai/gpt-oss-20b` works from its official Safetensors checkpoint through
+vLLM's built-in `GptOssForCausalLM` and `gpt_oss_mxfp4` paths. It does not use
+GGUF, a GGUF plugin, or remote model code. The local checkpoint is in
+`C:\AI\models\gpt-oss-20b`.
+
+The stable baseline is:
+
+```text
+--gpu-memory-utilization 0.55
+--max-model-len 2048
+-cc.cudagraph_mode=NONE
+```
+
+vLLM loaded 12.82 GiB of checkpoint shards into 14.16 GiB of GPU model memory,
+selected `OAITritonMxfp4ExpertsMonolithic`, and allocated 51,741 BF16 KV-cache
+tokens. A single request with 256 input and 64 output tokens produced 32.80
+output tokens/s. Eight concurrent requests of the same size produced 209.62
+output tokens/s and 1,048.08 total tokens/s. The two guarded runs peaked at
+21.25 and 21.20 GiB, respectively.
+
+An offline chat request also completed with HTTP 200, a normal `stop` finish,
+and the correct final response. The `run-batch` frontend needs
+`WindowsSelectorEventLoopPolicy` for pyzmq on native Windows. After output is
+written, its cleanup currently calls the Unix-only `signal.SIGKILL`, so that
+frontend exits with status 1 despite successful inference. The throughput
+runner exits cleanly; these are frontend compatibility issues, not a model or
+ROCm failure.
 
 ## Launcher settings
 
