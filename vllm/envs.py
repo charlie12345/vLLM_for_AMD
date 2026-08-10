@@ -116,6 +116,7 @@ if TYPE_CHECKING:
     VLLM_FORCE_AOT_LOAD: bool = False
     VLLM_USE_MEGA_AOT_ARTIFACT: bool = False
     VLLM_USE_TRITON_AWQ: bool = False
+    VLLM_ROCM_USE_RDNA_W4A16: bool = True
     VLLM_FASTSAFETENSORS_QUEUE_SIZE: int = 0
     VLLM_TRITON_FORCE_FIRST_CONFIG: bool = False
     VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
@@ -1137,6 +1138,11 @@ environment_variables: dict[str, Callable[[], Any]] = {
     ),
     # If set, vLLM will use Triton implementations of AWQ.
     "VLLM_USE_TRITON_AWQ": lambda: bool(int(os.getenv("VLLM_USE_TRITON_AWQ", "0"))),
+    # Use the modular hybrid W4A16 kernel for compatible native AWQ models on
+    # RDNA3/RDNA4. Set to 0 to retain the generic AutoAWQ implementation.
+    "VLLM_ROCM_USE_RDNA_W4A16": lambda: bool(
+        int(os.getenv("VLLM_ROCM_USE_RDNA_W4A16", "1"))
+    ),
     # If set, monkey-patch triton.runtime.autotuner.Autotuner.run to skip
     # benchmarking and select the first valid config (walking past invalid
     # ones). Used to eliminate autotuning variability when measuring kernel
