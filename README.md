@@ -1,5 +1,8 @@
 # vLLM for AMD on Native Windows
 
+**Thank you to AMD for the Threadripper platform and Radeon AI PRO R9700
+hardware that made this project possible.**
+
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2011-0078D4)](#requirements)
 [![Accelerator](https://img.shields.io/badge/accelerator-AMD%20ROCm%2FHIP-ED1C24)](#how-it-works)
@@ -14,11 +17,6 @@ It is validated on Windows 11 with a Radeon AI PRO R9700 (RDNA4, `gfx1201`) and
 AMD's Windows ROCm/PyTorch wheels. It provides an OpenAI-compatible server,
 offline benchmarks, FP8/MXFP4 support where vLLM has a compatible kernel, and a
 fail-closed VRAM watchdog for desktop GPUs.
-
-> **Thank you to AMD** for the Threadripper platform and Radeon AI PRO R9700
-> hardware that made this native-Windows ROCm work possible.
-
-<!-- Separate the acknowledgement and warning callouts. -->
 
 > [!WARNING]
 > This is not an official AMD or vLLM release. The tested stack is version
@@ -58,8 +56,6 @@ evolve, so follow the links for their latest status.
 | Project | OS and accelerator | Architectural difference |
 | --- | --- | --- |
 | [Upstream vLLM](https://docs.vllm.ai/en/latest/getting_started/installation/gpu.html) | Official GPU requirements list Linux; no native Windows support | This is the source project. This fork adds native-Windows build and runtime compatibility while retaining its ROCm platform. |
-| [SystemPanic/vllm-windows](https://github.com/SystemPanic/vllm-windows) | Native Windows, NVIDIA CUDA | A Windows port centered on CUDA, CUDA libraries, and optional Windows NCCL. It is not an AMD ROCm port. |
-| [lemonade-sdk/vllm-rocm](https://github.com/lemonade-sdk/vllm-rocm) | AMD ROCm portable bundles for Linux/Lemonade | Ships a relocatable Linux runtime and explicitly requires a Linux kernel with `amdgpu`; it does not build this in-tree native-Windows fork. |
 | [ThePie88/vLLM-ROCm-Windows](https://github.com/ThePie88/vLLM-ROCm-Windows) | Native Windows, AMD ROCm, primarily tested on RDNA3 `gfx1100` | An out-of-tree vLLM platform plugin and compatibility layer. It installs upstream vLLM without its normal kernel build, then separately loads selected native/custom kernels. |
 | This repository | Native Windows, AMD ROCm, tested on RDNA4 `gfx1201` | An in-tree vLLM fork that builds vLLM's HIP extensions directly, patches Windows process/runtime assumptions, and ships safe AMD-tuned launchers plus a VRAM/stall watchdog. |
 
