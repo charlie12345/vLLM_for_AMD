@@ -254,3 +254,25 @@ vllm/grpc/vllm_engine_pb2.pyi
 
 # Ignore generated cpu headers 
 csrc/cpu/cpu_attn_dispatch_generated.h
+
+# Native Windows ROCm local state and generated artifacts
+/.triton_cache*/
+/logs/
+/profiles/
+/models/
+/checkpoints/
+*.safetensors
+*.gguf
+
+# Local credentials and private key material
+.env.*
+!.env.example
+/.secrets/
+/secrets/
+/credentials.json
+/service-account*.json
+/hf_token
+/*.pem
+/*.key
+/*.p12
+/*.pfx
