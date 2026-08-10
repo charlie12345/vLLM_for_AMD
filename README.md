@@ -319,7 +319,8 @@ See the official [Hugging Face authentication documentation](https://huggingface
 | GPT-OSS MXFP4 | Supported through vLLM's built-in Triton MXFP4 MoE path. |
 | FP8 compressed-tensors | Supported, but graph replay can hang on some larger FP8 shapes; start with `cudagraph_mode=NONE`. |
 | FP8 KV cache | Supported and roughly halves KV memory. Validate output quality because untuned default scales can affect accuracy. |
-| AWQ/GPTQ INT4 | Do not assume a fast or working `gfx1201` kernel. This remains kernel-dependent. |
+| AWQ INT4 | Native 4-bit AWQ Safetensors with group size 32/64/128 use the hybrid RDNA W4A16 path on gfx11/gfx12: HIP skinny GEMM for decode and tuned Triton GEMM for larger batches. `Qwen/Qwen3-4B-AWQ` is validated on gfx1201. |
+| GPTQ INT4 | Kernel-dependent. The native AWQ validation does not establish that every GPTQ packing or activation-order configuration works on gfx1201. |
 | GGUF | Not included in core vLLM here. The official GGUF path is an out-of-tree plugin, which this project does not install. Prefer native Safetensors checkpoints. |
 | `trust_remote_code` models | Potentially supported, but review the repository code first. Never enable the flag for an untrusted model. |
 
@@ -604,8 +605,11 @@ VRAM, and throughput tests.
   1. The throughput runner exits cleanly.
 - **Vulkan is not a fallback:** if ROCm fails, installing Vulkan does not repair
   this vLLM backend.
-- **INT4 is kernel-dependent:** AWQ/GPTQ model size alone is not proof that its
-  CUDA-oriented kernel has a correct, fast RDNA4 path.
+- **AWQ compatibility is format-specific:** validated native AWQ uses 4-bit
+  weights, group size 32/64/128, FP16/BF16 activations, and no activation-order
+  index. Set `VLLM_ROCM_USE_RDNA_W4A16=0` to fall back to generic AutoAWQ while
+  diagnosing an unsupported checkpoint. GPTQ and other INT4 layouts remain
+  kernel-dependent.
 
 ## Repository scripts
 

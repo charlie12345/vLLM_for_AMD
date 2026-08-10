@@ -169,6 +169,66 @@ class TestAutoAWQConfigOverrideLogic:
         ), "from_config should set quant_method='awq' in full_config"
 
 
+class TestAutoAWQROCmKernelRouting:
+    """Tests for native AWQ routing into modular RDNA W4A16 kernels."""
+
+    @staticmethod
+    def _get_method(
+        monkeypatch,
+        *,
+        on_gfx1x: bool,
+        group_size: int = 128,
+        use_rdna_w4a16: bool = True,
+    ):
+        import vllm.model_executor.layers.quantization.auto_awq as auto_awq
+
+        class DummyLinear:
+            pass
+
+        monkeypatch.setattr(auto_awq, "LinearBase", DummyLinear)
+        monkeypatch.setattr(auto_awq.current_platform, "is_xpu", lambda: False)
+        monkeypatch.setattr(auto_awq.current_platform, "is_cpu", lambda: False)
+        monkeypatch.setattr(auto_awq.current_platform, "is_rocm", lambda: True)
+        monkeypatch.setattr(auto_awq.current_platform, "is_cuda", lambda: False)
+        monkeypatch.setattr("vllm.platforms.rocm.on_gfx1x", lambda: on_gfx1x)
+        monkeypatch.setattr(auto_awq, "verify_marlin_supported", lambda **kwargs: None)
+        monkeypatch.setattr(
+            auto_awq.envs,
+            "VLLM_ROCM_USE_RDNA_W4A16",
+            use_rdna_w4a16,
+        )
+
+        config = auto_awq.AutoAWQConfig(
+            weight_bits=4,
+            group_size=group_size,
+            zero_point=True,
+            lm_head_quantized=False,
+        )
+        return auto_awq, config.get_quant_method(DummyLinear(), "model.q_proj")
+
+    def test_gfx1x_uses_modular_w4a16_method(self, monkeypatch):
+        auto_awq, method = self._get_method(monkeypatch, on_gfx1x=True)
+
+        assert isinstance(method, auto_awq.AutoAWQMarlinLinearMethod)
+
+    def test_other_rocm_uses_generic_awq_fallback(self, monkeypatch):
+        auto_awq, method = self._get_method(monkeypatch, on_gfx1x=False)
+
+        assert isinstance(method, auto_awq.AutoAWQLinearMethod)
+
+    def test_unsupported_group_size_uses_generic_awq_fallback(self, monkeypatch):
+        auto_awq, method = self._get_method(monkeypatch, on_gfx1x=True, group_size=16)
+
+        assert isinstance(method, auto_awq.AutoAWQLinearMethod)
+
+    def test_disabled_rdna_w4a16_uses_generic_awq_fallback(self, monkeypatch):
+        auto_awq, method = self._get_method(
+            monkeypatch, on_gfx1x=True, use_rdna_w4a16=False
+        )
+
+        assert isinstance(method, auto_awq.AutoAWQLinearMethod)
+
+
 # =============================================================================
 # End-to-end integration tests (require GPU environment)
 # =============================================================================
