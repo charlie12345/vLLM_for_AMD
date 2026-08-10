@@ -304,6 +304,23 @@ class AutoAWQConfig(QuantizationConfig):
             if current_platform.is_cpu() or current_platform.is_xpu():
                 return AutoAWQMarlinLinearMethod(self)
 
+            # RDNA3/RDNA4 have a modular hybrid W4A16 kernel: a HIP skinny
+            # GEMM for decode and a tuned Triton GEMM for larger batches.
+            # Route compatible native AWQ checkpoints through the modular
+            # kernel selector so they can use that path after AWQ packing is
+            # converted to the standard MPLinearKernel format below. Keep the
+            # generic AWQ implementation as the fallback for other ROCm GPUs.
+            if current_platform.is_rocm():
+                from vllm.platforms.rocm import on_gfx1x
+
+                if (
+                    envs.VLLM_ROCM_USE_RDNA_W4A16
+                    and on_gfx1x()
+                    and self.weight_bits == 4
+                    and self.group_size in (32, 64, 128)
+                ):
+                    return AutoAWQMarlinLinearMethod(self)
+
             # Check if Marlin is supported and not using batch invariant mode
             # (Marlin kernels are not batch invariant)
             use_marlin = (

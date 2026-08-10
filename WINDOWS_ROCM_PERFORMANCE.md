@@ -68,6 +68,27 @@ frontend exits with status 1 despite successful inference. The throughput
 runner exits cleanly; these are frontend compatibility issues, not a model or
 ROCm failure.
 
+### Native AWQ INT4
+
+`Qwen/Qwen3-4B-AWQ` works from its official 2.48 GiB Safetensors checkpoint
+without a GGUF plugin. On gfx1201, compatible native AWQ layers are converted
+to the modular packed format and select `RDNAHybridW4A16LinearKernel`: HIP
+skinny W4A16 for decode batches up to five tokens and a gfx1201-tuned Triton
+W4A16 kernel for larger batches.
+
+With one random prompt, 64 input tokens, 16 output tokens, maximum model length
+512, `--gpu-memory-utilization 0.40`, and `cudagraph_mode=NONE`, the repeated
+run produced 65.80 output tokens/s and peaked at 16.35 GiB. The earlier generic
+AutoAWQ path produced 30.45 output tokens/s with the same workload. These
+single-request measurements are sensitive to first-shape Triton JIT; use a
+repeated run and a representative serving workload before drawing broader
+throughput conclusions. Deterministic offline generation produced coherent
+text through the hybrid path.
+
+The hybrid path is enabled by default for 4-bit AWQ group sizes 32, 64, and
+128 on gfx11/gfx12. Set `VLLM_ROCM_USE_RDNA_W4A16=0` to retain generic AutoAWQ
+for compatibility diagnosis.
+
 ## Launcher settings
 
 `bench_windows_rocm.cmd` and `serve_windows_rocm.cmd` keep the conservative
