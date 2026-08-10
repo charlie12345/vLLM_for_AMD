@@ -1,8 +1,7 @@
 # vLLM for AMD on Native Windows
 
 > [!IMPORTANT]
->
-> ## Thank you, AMD
+> **Thank you, AMD**
 >
 > AMD's Threadripper platform and Radeon AI PRO R9700 hardware made this
 > native-Windows ROCm project possible.
