@@ -8,7 +8,7 @@
     - validates the required Windows, AMD, uv, Git, and Visual Studio setup;
     - creates or reuses .venv211 with Python 3.12;
     - installs the pinned AMD ROCm/PyTorch, Triton, and build dependencies;
-    - probes the AMD GPU through vram_guard.ps1 and requires gfx1201;
+    - probes the AMD GPU through vram_guard.ps1 and requires the selected GFX architecture;
     - builds and editable-installs this vLLM fork; and
     - performs a second guarded import/device verification.
 
@@ -18,6 +18,10 @@
 
 .PARAMETER MaxJobs
     Maximum parallel native build jobs. Defaults to 16.
+
+.PARAMETER GpuArch
+    AMD GFX architecture to verify and compile for. Supported values are
+    gfx1200 and gfx1201. Defaults to gfx1201 for backward compatibility.
 
 .PARAMETER GuardLimitGiB
     Dedicated-VRAM kill threshold used for the guarded GPU probes.
@@ -34,11 +38,17 @@
 
 .EXAMPLE
     .\setup_windows_rocm.ps1
+
+.EXAMPLE
+    .\setup_windows_rocm.ps1 -GpuArch gfx1200 -MaxJobs 6 -GuardWarnGiB 13 -GuardLimitGiB 14.5
 #>
 #Requires -Version 5.1
 
 [CmdletBinding()]
 param(
+    [ValidateSet('gfx1200', 'gfx1201')]
+    [string]$GpuArch = 'gfx1201',
+
     [ValidateRange(1, 256)]
     [int]$MaxJobs = 16,
 
@@ -56,7 +66,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $ExpectedPython = '3.12'
-$ExpectedGpuArch = 'gfx1201'
+$ExpectedGpuArch = $GpuArch
 $TorchVersion = '2.11.0+rocm7.13.0'
 $TorchvisionVersion = '0.26.0+rocm7.13.0'
 $RocmVersion = '7.13.0'
@@ -253,7 +263,7 @@ if ($PlanOnly) {
     Write-Step 'Plan'
     Write-Host '1. Create or reuse .venv211 with Python 3.12.'
     Write-Host '2. Install the pinned ROCm 7.13, PyTorch 2.11, and Triton stack.'
-    Write-Host '3. Run a fail-closed guarded Torch/HIP/gfx1201 probe.'
+    Write-Host "3. Run a fail-closed guarded Torch/HIP/$ExpectedGpuArch probe."
     Write-Host '4. Build the native C++/HIP extensions with clang-cl.'
     Write-Host '5. Editable-install vLLM and run a guarded import/device probe.'
     Write-Host "`nPlanOnly completed; no files, packages, GPU contexts, or builds were changed."
@@ -279,7 +289,7 @@ else {
 }
 
 $pythonVersion = & $VenvPython -c `
-    'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
+    'import sys; print(sys.version_info.major, sys.version_info.minor, sep=chr(46))'
 if ($LASTEXITCODE -ne 0 -or $pythonVersion.Trim() -ne $ExpectedPython) {
     throw "$Venv must contain Python $ExpectedPython; found '$pythonVersion'."
 }
@@ -347,16 +357,18 @@ print(json.dumps(result, sort_keys=True))
 if architecture_base != '$ExpectedGpuArch':
     raise SystemExit(
         f'Expected $ExpectedGpuArch, but Torch reported {architecture}. '
-        'This setup script only automates the tested R9700/RDNA4 target.'
+        'Select the matching architecture with -GpuArch and rebuild.'
     )
 "@
 Invoke-GuardedProbe -Name 'ROCm device verification' -PythonCode $torchProbe
 
 $previousMaxJobs = [Environment]::GetEnvironmentVariable('MAX_JOBS', 'Process')
 $previousVllmRoot = [Environment]::GetEnvironmentVariable('VLLM_ROOT', 'Process')
+$previousGpuArch = [Environment]::GetEnvironmentVariable('VLLM_ROCM_GPU_ARCH', 'Process')
 try {
     $env:MAX_JOBS = [string]$MaxJobs
     $env:VLLM_ROOT = $Root + '\'
+    $env:VLLM_ROCM_GPU_ARCH = $ExpectedGpuArch
 
     Invoke-Native `
         'Build vLLM native Windows ROCm extensions' `
@@ -377,6 +389,11 @@ finally {
     [Environment]::SetEnvironmentVariable(
         'VLLM_ROOT',
         $previousVllmRoot,
+        'Process'
+    )
+    [Environment]::SetEnvironmentVariable(
+        'VLLM_ROCM_GPU_ARCH',
+        $previousGpuArch,
         'Process'
     )
 }
