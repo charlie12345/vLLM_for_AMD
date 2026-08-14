@@ -226,6 +226,154 @@ update the AMD driver, Visual Studio, Git, or `uv`; review and install those
 system-wide prerequisites yourself. The manual commands below remain available
 for troubleshooting and auditing the automated process.
 
+## Radeon RX 9000 quick start
+
+This section is the shortest supported path from a fresh clone to an
+OpenAI-compatible local server on an RX 9000-series GPU. AMD's Windows system
+requirements currently map the cards as follows:
+
+| GPU | Build target | Validation in this fork |
+| --- | --- | --- |
+| Radeon RX 9070 XT, RX 9070 GRE, RX 9070 | `gfx1201` | Architecture supported; the closely related Radeon AI PRO R9700 is the primary upstream test card |
+| Radeon RX 9060 XT LP, RX 9060 XT, RX 9060 | `gfx1200` | RX 9060 XT 16 GiB validated with Qwen3-0.6B |
+
+Check AMD's current [Windows system requirements](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/shared/hipsdk/reference/system-requirements.html)
+before installing. A listed ROCm architecture does not guarantee that every
+vLLM model, quantization format, or optimized kernel works on that card.
+
+### 1. Install prerequisites and clone
+
+Install Python 3.12 x64, Git, `uv`, Visual Studio 2022 Build Tools with the
+Desktop C++ workload, CMake, Ninja, and a compatible AMD Radeon driver. Clone
+the repository into a short path on a drive with ample free space:
+
+```powershell
+git clone https://github.com/charlie12345/vLLM_for_AMD.git D:\AI\vllm
+Set-Location D:\AI\vllm
+Set-ExecutionPolicy -Scope Process Bypass
+```
+
+The ROCm development SDK, Python environment, download cache, and native build
+intermediates can consume tens of GiB. Keep at least 40 GiB free for the first
+installation when possible.
+
+### 2. Select the architecture and safety limits
+
+Choose the command matching the GPU. The examples assume a display-connected
+card and deliberately leave VRAM available for Windows.
+
+RX 9060 XT 16 GiB (`gfx1200`):
+
+```powershell
+.\setup_windows_rocm.ps1 -GpuArch gfx1200 -PlanOnly `
+  -MaxJobs 6 -GuardWarnGiB 13 -GuardLimitGiB 14.5
+.\setup_windows_rocm.ps1 -GpuArch gfx1200 `
+  -MaxJobs 6 -GuardWarnGiB 13 -GuardLimitGiB 14.5
+```
+
+RX 9060 8 GiB or RX 9060 XT 8 GiB (`gfx1200`):
+
+```powershell
+.\setup_windows_rocm.ps1 -GpuArch gfx1200 -PlanOnly `
+  -MaxJobs 6 -GuardWarnGiB 6.5 -GuardLimitGiB 7.25
+.\setup_windows_rocm.ps1 -GpuArch gfx1200 `
+  -MaxJobs 6 -GuardWarnGiB 6.5 -GuardLimitGiB 7.25
+```
+
+RX 9070-family 16 GiB (`gfx1201`):
+
+```powershell
+.\setup_windows_rocm.ps1 -GpuArch gfx1201 -PlanOnly `
+  -MaxJobs 6 -GuardWarnGiB 13 -GuardLimitGiB 14.5
+.\setup_windows_rocm.ps1 -GpuArch gfx1201 `
+  -MaxJobs 6 -GuardWarnGiB 13 -GuardLimitGiB 14.5
+```
+
+The full setup creates `.venv211`, installs the pinned ROCm/PyTorch/Triton
+stack, verifies the selected GPU architecture, compiles the native HIP
+extensions, and verifies the resulting vLLM installation. Do not activate or
+reuse an unrelated Python environment for this build.
+
+### 3. Download a small smoke-test model
+
+Start with a small BF16 model before trying a large or quantized checkpoint:
+
+```powershell
+.\.venv211\Scripts\Activate.ps1
+New-Item -ItemType Directory -Path .\models -Force | Out-Null
+.\.venv211\Scripts\hf.exe download Qwen/Qwen3-0.6B `
+  --local-dir .\models\Qwen3-0.6B
+```
+
+### 4. Start the guarded server
+
+Keep model, log, and compiler-cache files under the repository. For a 16 GiB
+card, run:
+
+```powershell
+$root = (Resolve-Path .).Path
+$model = Join-Path $root 'models\Qwen3-0.6B'
+$logs = Join-Path $root 'logs'
+New-Item -ItemType Directory -Path $logs -Force | Out-Null
+
+$env:VLLM_CACHE_ROOT = Join-Path $root '.cache\vllm'
+$env:TRITON_CACHE_DIR = Join-Path $root '.cache\triton'
+
+$serverLog = Join-Path $logs 'qwen3-0.6b-server.log'
+$guardLog = Join-Path $logs 'qwen3-0.6b-server.guard.log'
+$command = "`"$root\serve_windows_rocm.cmd`" `"$model`" " +
+  '--served-model-name qwen3-0.6b --host 127.0.0.1 --port 8000 ' +
+  '--max-model-len 2048 --gpu-memory-utilization 0.55 ' +
+  "-cc.cudagraph_mode=NONE > `"$serverLog`" 2>&1"
+
+& "$root\vram_guard.ps1" `
+  -Command $command `
+  -WarnGiB 13 `
+  -LimitGiB 14.5 `
+  -LogPath $guardLog
+```
+
+For an 8 GiB card, replace the guard thresholds with `6.5` and `7.25` and
+start with a lower `--gpu-memory-utilization`, such as `0.45`. Leave the guard
+terminal open. Initial model startup can spend several minutes compiling
+Triton kernels; wait until the log reports `Application startup complete`.
+
+### 5. Verify and send a chat request
+
+Open a second PowerShell window:
+
+```powershell
+(Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/health).StatusCode
+
+$body = @{
+  model = 'qwen3-0.6b'
+  messages = @(
+    @{ role = 'user'; content = 'Write one sentence confirming that vLLM works.' }
+  )
+  max_tokens = 128
+  temperature = 0
+  chat_template_kwargs = @{ enable_thinking = $false }
+} | ConvertTo-Json -Depth 5
+
+$response = Invoke-RestMethod `
+  -Uri http://127.0.0.1:8000/v1/chat/completions `
+  -Method Post `
+  -ContentType 'application/json' `
+  -Body $body
+
+$response.choices[0].message.content
+```
+
+An HTTP `200` health result followed by generated text confirms the basic
+native-Windows ROCm path. This fork remains experimental, single-GPU only, and
+may fall back from a custom ROCm kernel to Triton on unsupported shapes or
+architectures.
+
+## Manual installation (advanced)
+
+The automated setup above is recommended. The following commands expose each
+installation and build step for troubleshooting or auditing.
+
 ### 3. Create the serving environment
 
 ```powershell
@@ -264,19 +412,23 @@ install the tested core serving stack while preserving AMD's ROCm Torch wheel.
   "import torch; print(torch.__version__); print(torch.version.hip); print(torch.cuda.get_device_name(0)); print(torch.cuda.get_device_properties(0).gcnArchName)"
 ```
 
-For the tested card, the final line must report `gfx1201`. Stop here if Torch
-cannot see the expected AMD GPU.
+The final line must match the selected target: `gfx1200` for the RX 9060 family
+or `gfx1201` for the RX 9070 family. Stop here if Torch cannot see the expected
+AMD GPU.
 
 ### 5. Build and install this fork
 
 ```powershell
+$env:VLLM_ROCM_GPU_ARCH = 'gfx1201' # Use gfx1200 for the RX 9060 family.
 .\build_windows_rocm.cmd
 .\install_windows_rocm.cmd
 ```
 
 These scripts load the Visual Studio environment, find ROCm through
 `python -m rocm_sdk path --root`, select `clang-cl` for both C++ and HIP, build
-for `gfx1201`, and install vLLM into `.venv211` in editable mode.
+for the architecture selected in `VLLM_ROCM_GPU_ARCH`, and install vLLM into
+`.venv211` in editable mode. If the variable is unset, the original `gfx1201`
+default is used.
 
 Verify the install without loading a model:
 
