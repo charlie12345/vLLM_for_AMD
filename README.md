@@ -17,9 +17,12 @@ Linux VM, Docker container, CUDA translation layer, or GGUF plugin required.
 This is an experimental, community-maintained fork of
 [vLLM](https://github.com/vllm-project/vllm), currently based on vLLM v0.26.0.
 It is validated on Windows 11 with a Radeon AI PRO R9700 (RDNA4, `gfx1201`) and
-AMD's Windows ROCm/PyTorch wheels. It provides an OpenAI-compatible server,
-offline benchmarks, FP8/MXFP4 support where vLLM has a compatible kernel, and a
-fail-closed VRAM watchdog for desktop GPUs.
+a Radeon RX 9060 XT 16 GiB (RDNA4, `gfx1200`) using AMD's Windows ROCm/PyTorch
+wheels. RX 9060 XT validation includes a successful native build, Qwen3-0.6B
+model load, HTTP health check, and OpenAI-compatible chat completion, with
+paged attention falling back to Triton. The fork provides an OpenAI-compatible
+server, offline benchmarks, FP8/MXFP4 support where vLLM has a compatible
+kernel, and a fail-closed VRAM watchdog for desktop GPUs.
 
 > [!WARNING]
 > This is not an official AMD or vLLM release. The tested stack is version
@@ -31,7 +34,8 @@ fail-closed VRAM watchdog for desktop GPUs.
 | Item | Current status |
 | --- | --- |
 | Host OS | Native Windows 11 x64 |
-| Tested GPU | AMD Radeon AI PRO R9700, RDNA4 `gfx1201`, 32 GiB |
+| Primary validated GPU | AMD Radeon AI PRO R9700, RDNA4 `gfx1201`, 32 GiB |
+| Additional validated GPU | AMD Radeon RX 9060 XT, RDNA4 `gfx1200`, 16 GiB |
 | vLLM base | v0.26.0, base commit `568afb3` |
 | Python | 3.12.10 |
 | PyTorch | 2.11.0 + ROCm 7.13.0 |
@@ -42,9 +46,10 @@ fail-closed VRAM watchdog for desktop GPUs.
 | Model files | Hugging Face/Safetensors formats; no GGUF plugin included |
 | Vulkan | Not used by this vLLM backend |
 
-Other AMD architectures may work after selecting matching ROCm wheels and
-changing the build target, but they are not validated by this repository yet.
-The checked-in build environment currently targets `gfx1201` explicitly.
+The automated setup accepts `gfx1200` and `gfx1201` through `-GpuArch`, with
+`gfx1201` retained as the backward-compatible default. Other AMD architectures
+may work after selecting matching ROCm wheels and extending the build target,
+but they are not validated by this repository.
 
 ## Why this Windows port is different
 
