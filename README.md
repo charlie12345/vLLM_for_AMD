@@ -117,8 +117,9 @@ results, profiles, and current kernel limitations.
 - An AMD GPU supported by the Windows ROCm/PyTorch release you install. Check
   AMD's current [Windows compatibility matrix](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityrad/windows/windows_compatibility.html)
   and [HIP SDK system requirements](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/shared/hipsdk/reference/system-requirements.html).
-- This branch is tested only on `gfx1201`: Radeon AI PRO R9700 and the same
-  RDNA4 target family.
+- This branch is validated on `gfx1201` (Radeon AI PRO R9700) and has also
+  completed a native-Windows model-serving smoke test on `gfx1200` (Radeon
+  RX 9060 XT). Other RDNA4 targets remain experimental.
 - Enough system RAM and disk for the checkpoint plus build intermediates.
   Thirty-two GiB of system RAM is a practical floor for smaller models; 64 GiB
   or more is recommended for larger checkpoints and source builds.
@@ -197,13 +198,26 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\setup_windows_rocm.ps1
 ```
 
+For a Radeon RX 9060 XT (`gfx1200`, 16 GiB), select the architecture and use
+conservative build concurrency and VRAM limits:
+
+```powershell
+.\setup_windows_rocm.ps1 -GpuArch gfx1200 -PlanOnly `
+  -MaxJobs 6 -GuardWarnGiB 13 -GuardLimitGiB 14.5
+.\setup_windows_rocm.ps1 -GpuArch gfx1200 `
+  -MaxJobs 6 -GuardWarnGiB 13 -GuardLimitGiB 14.5
+```
+
+Omitting `-GpuArch` preserves the original `gfx1201` default.
+
 `-PlanOnly` checks Windows, the AMD adapter, Git, `uv`, Visual Studio, system
 RAM, disk headroom, and repository files without installing packages, opening a
 GPU context, or building anything. The full run then:
 
 1. Creates or reuses `.venv211` with Python 3.12.
 2. Installs the exact ROCm 7.13, PyTorch 2.11, and Triton packages below.
-3. Verifies Torch/HIP and requires `gfx1201` through the fail-closed VRAM guard.
+3. Verifies Torch/HIP and requires the selected GFX architecture through the
+   fail-closed VRAM guard.
 4. Builds and editable-installs the native Windows ROCm extensions.
 5. Runs a second guarded vLLM import and device verification.
 
@@ -560,27 +574,33 @@ on the repository as a second layer. If a real credential is ever committed,
 rotate or revoke it immediately; deleting the working-tree file does not remove
 it from Git history.
 
-## Building for a different AMD architecture
+## Selecting an AMD architecture
 
-The current `env_windows_rocm.cmd` contains two explicit `gfx1201` settings:
+The automated setup supports `gfx1201` (the default) and `gfx1200` through the
+`-GpuArch` parameter. It passes the selection consistently to
+`PYTORCH_ROCM_ARCH` and `CMAKE_HIP_ARCHITECTURES`:
 
-- `PYTORCH_ROCM_ARCH=gfx1201`
-- `-DCMAKE_HIP_ARCHITECTURES=gfx1201`
+```powershell
+.\setup_windows_rocm.ps1 -GpuArch gfx1200 -PlanOnly
+.\setup_windows_rocm.ps1 -GpuArch gfx1200
+```
 
-To experiment with another GPU:
+To experiment with an architecture outside those two validated options:
 
 1. Find its GFX target in AMD's support matrix or with a working ROCm Torch
    install.
 2. Install the matching AMD ROCm/PyTorch device wheels. Do not use `gfx120X-all`
    for an unrelated architecture.
-3. Change both build targets above to the same GFX value.
+3. Extend the `GpuArch` validation set, keeping the PyTorch and CMake targets
+   identical.
 4. Delete only the repository's generated build directory, rebuild, and start
    with a very small model under conservative guard limits.
 
 Architecture support in a ROCm wheel does not guarantee that every vLLM
-attention or quantization kernel supports that architecture. Treat all targets
-other than `gfx1201` as unverified until they pass model-load, coherent-output,
-VRAM, and throughput tests.
+attention or quantization kernel supports that architecture. The `gfx1200`
+smoke test used Qwen3-0.6B and fell back from the custom ROCm paged-attention
+kernel to Triton; broader model, quantization, VRAM, and throughput coverage is
+still required.
 
 ## Known limitations and troubleshooting
 

@@ -1,6 +1,6 @@
 @echo off
 REM =====================================================================
-REM Shared build environment for native Windows + ROCm (gfx1201 / RDNA4).
+REM Shared build environment for native Windows + ROCm (gfx1200/gfx1201).
 REM Dot-sourced by build_windows_rocm.cmd and install_windows_rocm.cmd.
 REM Deliberately has no setlocal: the caller owns the scope.
 REM
@@ -35,7 +35,8 @@ set PATH=%ROCM_ROOT%\bin;%ROCM_ROOT%\lib\llvm\bin;%VENV%\Scripts;%PATH%
 
 REM --- vLLM build configuration ----------------------------------------
 set VLLM_TARGET_DEVICE=rocm
-set PYTORCH_ROCM_ARCH=gfx1201
+if "%VLLM_ROCM_GPU_ARCH%"=="" set VLLM_ROCM_GPU_ARCH=gfx1201
+set PYTORCH_ROCM_ARCH=%VLLM_ROCM_GPU_ARCH%
 if "%MAX_JOBS%"=="" set MAX_JOBS=16
 
 REM setup.py appends $CMAKE_ARGS verbatim, and later -D wins for cache vars,
@@ -43,7 +44,7 @@ REM so this also overrides the -DROCM_PATH that setup.py derives from torch.
 set CMAKE_ARGS=-DCMAKE_CXX_COMPILER=%ROCM_ROOT_FWD%/lib/llvm/bin/clang-cl.exe ^
  -DCMAKE_HIP_COMPILER=%ROCM_ROOT_FWD%/lib/llvm/bin/clang-cl.exe ^
  -DCMAKE_HIP_PLATFORM=amd ^
- -DCMAKE_HIP_ARCHITECTURES=gfx1201 ^
+ -DCMAKE_HIP_ARCHITECTURES=%VLLM_ROCM_GPU_ARCH% ^
  -DCMAKE_HIP_FLAGS=--rocm-device-lib-path=%ROCM_ROOT_FWD%/lib/llvm/amdgcn/bitcode ^
  -DROCM_PATH=%ROCM_ROOT_FWD%
 

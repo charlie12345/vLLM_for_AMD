@@ -179,7 +179,11 @@ else {
 if ($StallLogPath) { Write-Guard "stall guard: $StallLogPath idle > ${StallSec}s" }
 Write-Guard "command: $Command"
 
-$proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Command -PassThru -WindowStyle Hidden
+# cmd.exe requires an additional outer quote pair when the command itself
+# starts with a quoted executable path. Without it, Start-Process argument
+# serialization can strip the executable quotes and lose redirections.
+$cmdCommand = '"' + $Command + '"'
+$proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/s', '/c', $cmdCommand -PassThru -WindowStyle Hidden
 Write-Guard "child pid $($proc.Id)"
 $trackedPids = [System.Collections.Generic.HashSet[int]]::new()
 [void]$trackedPids.Add($proc.Id)
