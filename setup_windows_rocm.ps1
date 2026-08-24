@@ -121,7 +121,7 @@ function Invoke-GuardedProbe([string]$Name, [string]$PythonCode) {
     )
 
     try {
-        $command = '"{0}" "{1}" > "{2}" 2>&1' -f (
+        $command = 'call "{0}" "{1}" > "{2}" 2>&1' -f (
             $VenvPython,
             $probeFile,
             $probeLog
@@ -279,7 +279,7 @@ else {
 }
 
 $pythonVersion = & $VenvPython -c `
-    'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
+    'import sys; print(sys.version_info.major, sys.version_info.minor, sep=chr(46))'
 if ($LASTEXITCODE -ne 0 -or $pythonVersion.Trim() -ne $ExpectedPython) {
     throw "$Venv must contain Python $ExpectedPython; found '$pythonVersion'."
 }
