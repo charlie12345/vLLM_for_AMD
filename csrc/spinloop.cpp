@@ -21,7 +21,8 @@ extern "C" {
     #define VLLM_MWAITX_TARGET
   #endif
 
-VLLM_MWAITX_TARGET static void vllm_monitorx(void* addr, unsigned int extensions,
+VLLM_MWAITX_TARGET static void vllm_monitorx(void* addr,
+                                             unsigned int extensions,
                                              unsigned int hints) {
   _mm_monitorx(addr, extensions, hints);
 }

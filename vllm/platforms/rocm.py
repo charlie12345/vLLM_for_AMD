@@ -818,9 +818,7 @@ class RocmPlatform(Platform):
 
     @classmethod
     @with_amdsmi_context
-    def _is_fully_connected_from_amdsmi(
-        cls, physical_device_ids: list[int]
-    ) -> bool:
+    def _is_fully_connected_from_amdsmi(cls, physical_device_ids: list[int]) -> bool:
         """
         Query if the set of gpus are fully connected by xgmi (1 hop)
         """

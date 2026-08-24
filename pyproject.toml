@@ -140,6 +140,7 @@ extend-ignore-identifiers-re = [".*[Uu][Ee][0-9][Mm][0-9].*"]
 [tool.typos.default.extend-identifiers]
 bbc5b7ede = "bbc5b7ede"
 NOOPs = "NOOPs"
+_O_WRONLY = "_O_WRONLY"
 nin_shortcut = "nin_shortcut"
 cudaDevAttrMaxSharedMemoryPerBlockOptin = "cudaDevAttrMaxSharedMemoryPerBlockOptin"
 sharedMemPerBlockOptin = "sharedMemPerBlockOptin"
