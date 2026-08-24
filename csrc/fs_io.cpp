@@ -32,9 +32,19 @@ constexpr int kODirectFlag = 0;
 #endif
 
 #if defined(_WIN32)
-constexpr int kBinaryFlag = O_BINARY;
+constexpr int kBinaryFlag = _O_BINARY;
+constexpr int kCreateFlag = _O_CREAT;
+constexpr int kExclusiveFlag = _O_EXCL;
+constexpr int kReadOnlyFlag = _O_RDONLY;
+constexpr int kTruncateFlag = _O_TRUNC;
+constexpr int kWriteOnlyFlag = _O_WRONLY;
 #else
 constexpr int kBinaryFlag = 0;
+constexpr int kCreateFlag = O_CREAT;
+constexpr int kExclusiveFlag = O_EXCL;
+constexpr int kReadOnlyFlag = O_RDONLY;
+constexpr int kTruncateFlag = O_TRUNC;
+constexpr int kWriteOnlyFlag = O_WRONLY;
 #endif
 
 extern "C" {
@@ -68,21 +78,24 @@ inline int _store_block(const char* tmp_path, const char* dest_path,
   }
 
   const int o_direct_flag = use_o_direct ? kODirectFlag : 0;
-  const int fd =
-      open(tmp_path,
-           O_CREAT | O_EXCL | O_WRONLY | O_TRUNC | o_direct_flag | kBinaryFlag,
-           0644);
+  const int fd = open(tmp_path,
+                      kCreateFlag | kExclusiveFlag | kWriteOnlyFlag |
+                          kTruncateFlag | o_direct_flag | kBinaryFlag,
+                      0644);
   if (fd < 0) {
     return errno;
   }
 
-  if (size > UINT_MAX) {
+#if defined(_WIN32)
+  if (size > static_cast<size_t>(UINT_MAX)) {
     close(fd);
     unlink(tmp_path);
     return EFBIG;
   }
-
   const auto written = write(fd, src, static_cast<unsigned int>(size));
+#else
+  const ssize_t written = write(fd, src, size);
+#endif
   if (written < 0 || static_cast<size_t>(written) != size) {
     const int err = written < 0 ? errno : EIO;
     close(fd);  // Best-effort cleanup; the real error is already captured.
@@ -115,17 +128,21 @@ inline int _store_block(const char* tmp_path, const char* dest_path,
 inline int _load_block(const char* source_path, char* dst, size_t size,
                        bool use_o_direct) {
   const int o_direct_flag = use_o_direct ? kODirectFlag : 0;
-  const int fd = open(source_path, O_RDONLY | o_direct_flag | kBinaryFlag, 0);
+  const int fd =
+      open(source_path, kReadOnlyFlag | o_direct_flag | kBinaryFlag, 0);
   if (fd < 0) {
     return errno;
   }
 
-  if (size > UINT_MAX) {
+#if defined(_WIN32)
+  if (size > static_cast<size_t>(UINT_MAX)) {
     close(fd);
     return EFBIG;
   }
-
   const auto bytes_read = read(fd, dst, static_cast<unsigned int>(size));
+#else
+  const ssize_t bytes_read = read(fd, dst, size);
+#endif
   if (bytes_read < 0) {
     // Transient read error: leave the file untouched.
     const int err = errno;

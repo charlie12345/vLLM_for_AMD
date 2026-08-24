@@ -1,0 +1,100 @@
+name: Sync Windows ROCm with upstream vLLM
+
+on:
+  schedule:
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: windows-rocm-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'charlie12345/vLLM_for_AMD'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the Windows ROCm branch
+        uses: actions/checkout@v4
+        with:
+          ref: windows-rocm
+          fetch-depth: 0
+
+      - name: Check for a stable upstream release
+        id: check
+        shell: pwsh
+        run: |
+          $state = @{}
+          .\update_windows_rocm.ps1 -CheckOnly | ForEach-Object {
+            if ($_ -match '^(CURRENT_BASE|LATEST_STABLE|UPDATE_AVAILABLE)=(.+)$') {
+              $state[$Matches[1]] = $Matches[2]
+            }
+          }
+          "current=$($state.CURRENT_BASE)" >> $env:GITHUB_OUTPUT
+          "latest=$($state.LATEST_STABLE)" >> $env:GITHUB_OUTPUT
+          "available=$($state.UPDATE_AVAILABLE)" >> $env:GITHUB_OUTPUT
+
+      - name: Rebase the patch stack
+        if: steps.check.outputs.available == 'true'
+        id: rebase
+        shell: pwsh
+        run: |
+          $target = '${{ steps.check.outputs.latest }}'
+          $branch = "automation/windows-rocm-$target"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c $branch
+          try {
+            .\update_windows_rocm.ps1 -TargetTag $target
+            git diff --check "$target..HEAD"
+            "success=true" >> $env:GITHUB_OUTPUT
+            "branch=$branch" >> $env:GITHUB_OUTPUT
+          } catch {
+            git rebase --abort 2>$null
+            "success=false" >> $env:GITHUB_OUTPUT
+            "branch=$branch" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Push the update branch
+        if: steps.rebase.outputs.success == 'true'
+        shell: pwsh
+        run: |
+          $branch = '${{ steps.rebase.outputs.branch }}'
+          git push --force-with-lease origin "HEAD:refs/heads/$branch"
+
+      - name: Open the validation pull request
+        if: steps.rebase.outputs.success == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $target = '${{ steps.check.outputs.latest }}'
+          $branch = '${{ steps.rebase.outputs.branch }}'
+          $existing = gh pr list --head $branch --base windows-rocm --state open --json number --jq '.[0].number'
+          if (-not $existing) {
+            gh pr create `
+              --base windows-rocm `
+              --head $branch `
+              --title "Update Windows ROCm base to $target" `
+              --body "Automated stable-tag rebase. Do not merge until the native Windows ROCm build, guarded device probe, and representative model benchmarks pass."
+          }
+
+      - name: Open a conflict issue
+        if: steps.check.outputs.available == 'true' && steps.rebase.outputs.success != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $target = '${{ steps.check.outputs.latest }}'
+          $title = "Resolve Windows ROCm update to $target"
+          $existing = gh issue list --state open --search "$title in:title" --json number --jq '.[0].number'
+          if (-not $existing) {
+            gh issue create `
+              --title $title `
+              --body "The scheduled stable-tag rebase found conflicts. Run ``.\update_windows_rocm.ps1 -TargetTag $target`` locally, resolve and validate the patch stack, then open an update PR."
+          }
