@@ -15,7 +15,7 @@ Run the real vLLM engine directly on an AMD GPU in native Windows: no WSL,
 Linux VM, Docker container, CUDA translation layer, or GGUF plugin required.
 
 This is an experimental, community-maintained fork of
-[vLLM](https://github.com/vllm-project/vllm), currently based on vLLM v0.26.0.
+[vLLM](https://github.com/vllm-project/vllm), currently based on vLLM v0.27.1.
 It is validated on Windows 11 with a Radeon AI PRO R9700 (RDNA4, `gfx1201`) and
 AMD's Windows ROCm/PyTorch wheels. It provides an OpenAI-compatible server,
 offline benchmarks, FP8/MXFP4 support where vLLM has a compatible kernel, and a
@@ -32,7 +32,7 @@ fail-closed VRAM watchdog for desktop GPUs.
 | --- | --- |
 | Host OS | Native Windows 11 x64 |
 | Tested GPU | AMD Radeon AI PRO R9700, RDNA4 `gfx1201`, 32 GiB |
-| vLLM base | v0.26.0, base commit `568afb3` |
+| vLLM base | v0.27.1, base commit `6e448d0` |
 | Python | 3.12.10 |
 | PyTorch | 2.11.0 + ROCm 7.13.0 |
 | ROCm SDK | 7.13.0 Python wheels, including development tools |
@@ -624,13 +624,29 @@ VRAM, and throughput tests.
 | `vram_guard.ps1` | Fail-closed dedicated-VRAM and optional stall watchdog. |
 | `quantize_fp8.py` | Optional CPU-side FP8 conversion helper; use a separate quantization environment. |
 | `WINDOWS_ROCM_PERFORMANCE.md` | Reproducible measurements, profiles, and blockers. |
+| `update_windows_rocm.ps1` | Checks for the latest stable upstream tag and safely rebases the Windows patch stack. |
+| `UPSTREAM_VERSION` | Machine-readable upstream stable tag used by update automation. |
 
 ## Updating from upstream
 
 This is a focused patch stack on top of vLLM, not an independent inference
 engine. Upstream changes can alter Python APIs, kernels, dependencies, and build
-requirements. Rebase onto a known vLLM tag, review every Windows patch, rebuild
-the native extensions, and rerun guarded model/quality benchmarks before
+requirements. Check for and apply the latest stable release with:
+
+```powershell
+.\update_windows_rocm.ps1 -CheckOnly
+.\update_windows_rocm.ps1
+```
+
+The updater ignores prereleases, fetches the selected tag directly from the
+official vLLM repository, creates a timestamped backup branch, and rebases the
+current patch stack. It never pushes or merges. If upstream and Windows changes
+overlap, it stops at the conflict for review.
+
+The scheduled `Sync Windows ROCm with upstream vLLM` GitHub workflow performs
+the same check daily. A clean rebase becomes a validation PR; a conflicted
+rebase becomes an issue. Neither path auto-merges. Review every Windows patch,
+rebuild the native extensions, and rerun guarded model/quality benchmarks before
 publishing an update.
 
 Contributors must also follow [AGENTS.md](AGENTS.md) and upstream's
