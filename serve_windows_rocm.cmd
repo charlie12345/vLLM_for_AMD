@@ -37,6 +37,16 @@ if errorlevel 1 (
   set "ROCM_MEM_ARG="
 )
 
+REM v0.27's upstream 8192-token compile warmup can transiently consume nearly
+REM all dedicated VRAM even with a conservative KV-cache fraction.
+if "%WINDOWS_ROCM_MAX_NUM_BATCHED_TOKENS%"=="" set WINDOWS_ROCM_MAX_NUM_BATCHED_TOKENS=2048
+echo %* | findstr /C:"max-num-batched-tokens" >nul
+if errorlevel 1 (
+  set "ROCM_BATCH_ARG=--max-num-batched-tokens %WINDOWS_ROCM_MAX_NUM_BATCHED_TOKENS%"
+) else (
+  set "ROCM_BATCH_ARG="
+)
+
 set "ROCM_KV_ARG="
 if not "%WINDOWS_ROCM_KV_CACHE_DTYPE%"=="" (
   echo %* | findstr /C:"kv-cache-dtype" >nul
@@ -49,5 +59,5 @@ if not "%WINDOWS_ROCM_CUDAGRAPH_MODE%"=="" (
   if errorlevel 1 set "ROCM_GRAPH_ARG=-cc.cudagraph_mode=%WINDOWS_ROCM_CUDAGRAPH_MODE%"
 )
 
-"%VENV%\Scripts\python.exe" -m vllm.entrypoints.cli.main serve %* %ROCM_MEM_ARG% %ROCM_KV_ARG% %ROCM_GRAPH_ARG%
+"%VENV%\Scripts\python.exe" -m vllm.entrypoints.cli.main serve %* %ROCM_MEM_ARG% %ROCM_BATCH_ARG% %ROCM_KV_ARG% %ROCM_GRAPH_ARG%
 exit /b %errorlevel%

@@ -473,6 +473,7 @@ Change the launcher's default without editing it:
 
 ```powershell
 $env:WINDOWS_ROCM_GPU_MEMORY_UTILIZATION = '0.65'
+$env:WINDOWS_ROCM_MAX_NUM_BATCHED_TOKENS = '4096'
 $env:WINDOWS_ROCM_KV_CACHE_DTYPE = 'fp8'
 $env:WINDOWS_ROCM_CUDAGRAPH_MODE = 'NONE'
 ```
@@ -494,7 +495,7 @@ Explicit command-line flags take precedence over these variables.
 | `-cc.cudagraph_mode=NONE` | Use for known-problem FP8 checkpoints | Keeps Torch/Inductor compilation but disables HIP graph capture/replay. |
 | `--attention-backend` | Leave on `auto` | Allows the ROCm platform to choose. `TRITON_ATTN` is useful for an explicit A/B test. |
 | `--max-num-seqs` | Leave at the vLLM default initially | Limits concurrent sequences. The default beat manually reduced values in the measured Qwen workload. |
-| `--max-num-batched-tokens` | Leave at the vLLM default initially | Controls scheduler token capacity; tune with a representative workload. |
+| `--max-num-batched-tokens` | `2048` wrapper default | Caps scheduler and compile-warmup tokens. Upstream's `8192` default briefly reached 31.48 GiB during the v0.27.1 FP8 smoke test; raise only under the watchdog. |
 | `--served-model-name` | A short stable API name | Avoids requiring clients to send an absolute Windows model path. |
 | `--host` | `127.0.0.1` | Keeps the server local. Binding `0.0.0.0` exposes it to the network. |
 | `--trust-remote-code` | Off | Executes Python from the model repository. Enable only after reviewing trusted code. |
