@@ -1,9 +1,25 @@
 # Native Windows ROCm performance notes
 
 These results are for a Radeon AI PRO R9700 (gfx1201, 32 GiB), ROCm 7.13.0,
-PyTorch 2.11, and models at a maximum model length of 2,048. The GPU also
+PyTorch 2.11, and models at a maximum model length of 2,048. The current source
+base is vLLM v0.27.1. The GPU also
 drives the desktop. Every model run below used `vram_guard.ps1` with a 26 GiB
 hard limit and a per-run stall log.
+
+## v0.27.1 update validation
+
+The 2026-08-23 update passed the full native extension build and guarded
+Torch/HIP/import probes. Binary Windows `fs_io_C` store/load and `spinloop`
+smokes passed. Qwen3-0.6B FP8 generated 8 tokens at 92.21 output tokens/s with
+`--max-num-batched-tokens 2048` and graph replay disabled. Qwen3-4B AWQ selected
+`RDNAHybridW4A16LinearKernel`, generated 4 tokens at 9.02 output tokens/s in
+eager mode, and peaked at 18.43 GiB.
+
+An otherwise identical FP8 cold start using upstream's 8,192-token compile
+warmup briefly reached 31.48 GiB for two watchdog samples. The launch wrappers
+therefore default to `--max-num-batched-tokens 2048`; an explicit CLI argument
+or `WINDOWS_ROCM_MAX_NUM_BATCHED_TOKENS` overrides it. The larger historical
+throughput rows below predate this conservative default.
 
 ## Recommended configurations
 
@@ -96,6 +112,7 @@ for compatibility diagnosis.
 defaults when the corresponding CLI argument is absent:
 
 - `WINDOWS_ROCM_GPU_MEMORY_UTILIZATION`
+- `WINDOWS_ROCM_MAX_NUM_BATCHED_TOKENS`
 - `WINDOWS_ROCM_KV_CACHE_DTYPE`
 - `WINDOWS_ROCM_CUDAGRAPH_MODE`
 
