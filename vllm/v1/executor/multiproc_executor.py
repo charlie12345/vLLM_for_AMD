@@ -787,8 +787,12 @@ class WorkerProc:
         )
         while pipes:
             ready = multiprocessing.connection.wait(pipes.keys())
-            for pipe in ready:
-                assert isinstance(pipe, Connection)
+            for ready_pipe in ready:
+                # ``multiprocessing.Pipe`` returns ``PipeConnection`` on
+                # Windows rather than the POSIX ``Connection`` class. Both
+                # implement recv(), and connection.wait() deliberately
+                # accepts either implementation.
+                pipe = cast(Connection, ready_pipe)
                 try:
                     # Wait until the WorkerProc is ready.
                     unready_proc_handle = pipes.pop(pipe)
