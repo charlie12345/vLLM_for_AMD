@@ -297,7 +297,7 @@ class TestROCmAiterFAPrefillSelection:
     """Tests for the ROCm AITER FlashAttention MLA prefill backend."""
 
     def test_rocm_priorities_prefer_aiter_fa(self):
-        """On ROCm, ROCM_AITER_FA is tried first, FLASH_ATTN as fallback."""
+        """Prefer AITER/FlashAttention before the portable Triton fallback."""
         with patch("vllm.platforms.current_platform") as mock_platform:
             mock_platform.is_rocm.return_value = True
             priorities = _get_mla_prefill_backend_priorities(
@@ -312,6 +312,7 @@ class TestROCmAiterFAPrefillSelection:
         assert priorities == [
             MLAPrefillBackendEnum.ROCM_AITER_FA,
             MLAPrefillBackendEnum.FLASH_ATTN,
+            MLAPrefillBackendEnum.TRITON_MLA,
         ]
 
     def test_supported_dtypes_are_fp16_bf16_only(self):

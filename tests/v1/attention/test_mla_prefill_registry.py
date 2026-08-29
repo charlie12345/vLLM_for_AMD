@@ -172,3 +172,12 @@ def test_rocm_aiter_fa_registered():
     # The AITER FA path is the fp16/bf16 generic-varlen prefill path.
     assert backend_cls.supports_dtype(torch.bfloat16)
     assert backend_cls.supports_dtype(torch.float16)
+
+
+def test_triton_mla_registered():
+    assert "TRITON_MLA" in MLAPrefillBackendEnum.__members__
+    path = MLAPrefillBackendEnum.TRITON_MLA.get_path()
+    assert path == (
+        "vllm.v1.attention.backends.mla.prefill.triton_mla.TritonMLAPrefillBackend"
+    )
+    assert MLAPrefillBackendEnum.TRITON_MLA.get_class().get_name() == "TRITON_MLA"
