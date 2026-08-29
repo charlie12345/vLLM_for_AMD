@@ -55,7 +55,7 @@ argcomplete==3.5.1
     # via datamodel-code-generator
 astor==0.8.1
     # via depyf
-attrs==24.2.0
+attrs==26.1.0
     # via
     #   aiohttp
     #   hypothesis
