@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """Convert a HF checkpoint to FP8 W8A8 (compressed-tensors) for vLLM on RDNA4.
 
 FP8 e4m3fn is the fastest format this card has a matrix path for: ~236 TFLOPS
