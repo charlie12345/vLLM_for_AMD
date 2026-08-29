@@ -15,7 +15,7 @@ Run the real vLLM engine directly on an AMD GPU in native Windows: no WSL,
 Linux VM, Docker container, CUDA translation layer, or GGUF plugin required.
 
 This is an experimental, community-maintained fork of
-[vLLM](https://github.com/vllm-project/vllm), currently based on vLLM v0.27.1.
+[vLLM](https://github.com/vllm-project/vllm), currently based on vLLM v0.28.0.
 It is validated on Windows 11 with a Radeon AI PRO R9700 (RDNA4, `gfx1201`) and
 AMD's Windows ROCm/PyTorch wheels. It provides an OpenAI-compatible server,
 offline benchmarks, FP8/MXFP4 support where vLLM has a compatible kernel, and a
@@ -32,7 +32,7 @@ fail-closed VRAM watchdog for desktop GPUs.
 | --- | --- |
 | Host OS | Native Windows 11 x64 |
 | Tested GPU | AMD Radeon AI PRO R9700, RDNA4 `gfx1201`, 32 GiB |
-| vLLM base | v0.27.1, base commit `6e448d0` |
+| vLLM base | v0.28.0, base commit `2cf0a69` |
 | Python | 3.12.10 |
 | PyTorch | 2.11.0 + ROCm 7.13.0 |
 | ROCm SDK | 7.13.0 Python wheels, including development tools |

@@ -2,9 +2,9 @@
 
 These results are for a Radeon AI PRO R9700 (gfx1201, 32 GiB), ROCm 7.13.0,
 PyTorch 2.11, and models at a maximum model length of 2,048. The current source
-base is vLLM v0.27.1. The GPU also
-drives the desktop. Every model run below used `vram_guard.ps1` with a 26 GiB
-hard limit and a per-run stall log.
+is based on vLLM v0.28.0; v0.27.1 was the previously validated baseline. The
+GPU also drives the desktop. Every model run below used `vram_guard.ps1` with a
+26 GiB hard limit and a per-run stall log.
 
 ## v0.27.1 update validation
 
