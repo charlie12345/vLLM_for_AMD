@@ -21,16 +21,6 @@ AMD's Windows ROCm/PyTorch wheels. It provides an OpenAI-compatible server,
 offline benchmarks, FP8/MXFP4 support where vLLM has a compatible kernel, and a
 fail-closed VRAM watchdog for desktop GPUs.
 
-> [!WARNING]
-> **Development status and risk notice:** This is experimental,
-> community-maintained software, not an official AMD or vLLM release. It may
-> crash or hang, reset a graphics driver, exhaust memory, produce incorrect
-> output, or cause loss of unsaved work. Use it at your own risk, keep backups,
-> validate important output, and monitor GPU temperature, power, and memory.
-> It is not intended for production, safety-critical, or unattended operation.
-> The project is provided without warranty under the Apache License 2.0; this
-> operational notice supplements, and does not alter, that license.
-
 ## Project status
 
 | Item | Current status |
