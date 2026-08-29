@@ -64,6 +64,7 @@ def _get_mla_prefill_backend_priorities(
         return [
             MLAPrefillBackendEnum.ROCM_AITER_FA,
             MLAPrefillBackendEnum.FLASH_ATTN,
+            MLAPrefillBackendEnum.TRITON_MLA,
         ]
 
     if device_capability.major == 10:  # Blackwell

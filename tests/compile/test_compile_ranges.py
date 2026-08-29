@@ -14,6 +14,7 @@ from vllm.compilation.passes.inductor_pass import (
     InductorPass,
     get_pass_context,
 )
+from vllm.compilation.piecewise_backend import PiecewiseBackend, RangeEntry
 from vllm.config import (
     VllmConfig,
     set_current_vllm_config,
@@ -125,6 +126,18 @@ def test_compile_config_get_compile_ranges():
         Range(start=9, end=32),
         Range(start=33, end=8192),
     ]
+
+
+def test_find_compile_range_without_concrete_compile_sizes():
+    """Dynamic ranges remain usable when compile_sizes is unset (O1)."""
+    compile_range = Range(start=1, end=511)
+    range_entry = RangeEntry(compile_range=compile_range, compiled=True)
+    backend = object.__new__(PiecewiseBackend)
+    backend.compile_sizes = None
+    backend.compile_ranges = [compile_range]
+    backend.range_entries = {compile_range: range_entry}
+
+    assert backend._find_range_for_shape(511) is range_entry
 
 
 class PostGradStaticShapeChecker(InductorPass):
