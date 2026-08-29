@@ -167,7 +167,10 @@ Write-Host "Fetching upstream $selectedTag..." -ForegroundColor Cyan
     "refs/tags/${selectedTag}:refs/tags/${selectedTag}"
 ))
 
-$mergedTags = @(Invoke-Git @('tag', '--merged', 'HEAD', '--list', 'v*'))
+$mergedTags = @(
+    Invoke-Git @('tag', '--merged', 'HEAD', '--list') |
+        Where-Object { $null -ne (ConvertTo-StableVersion $_) }
+)
 $currentBase = Get-NewestStableTag $mergedTags
 if (-not $currentBase) {
     throw 'Could not identify a stable upstream tag in the current history.'
