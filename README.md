@@ -108,9 +108,9 @@ results, profiles, and current kernel limitations.
 
 This repository deliberately remains a focused Windows port of vLLM. It does
 not embed the Direct-RCCL/D3D12 transport bridge in the vLLM source tree. The
-separate, private
+separate, public
 [`windows-amd-vllm-multigpu`](https://github.com/charlie12345/windows-amd-vllm-multigpu)
-repository installs that bridge as an external plugin for authorized users.
+repository installs that bridge as an external plugin.
 
 The plugin must be installed into the **same Python environment** as this fork
 and against the exact vLLM commit recorded in the plugin's pin file. Do not use
@@ -305,7 +305,7 @@ New-Item -ItemType Directory -Path .\logs -Force | Out-Null
   -Command '".\.venv-rocm10\Scripts\python.exe" ".\tools\verify_windows_rocm_runtime.py" --expected-arch gfx1201 > ".\logs\verify-runtime.log" 2>&1'
 ```
 
-## Choosing and downloading a model
+## Model compatibility
 
 Use a Hugging Face model architecture supported by
 [upstream vLLM](https://docs.vllm.ai/en/latest/models/supported_models.html), in
@@ -319,32 +319,6 @@ its particular quantization has a fast AMD RDNA4 kernel.
 | [`Qwen/Qwen3-0.6B`](https://huggingface.co/Qwen/Qwen3-0.6B) | BF16 or locally converted FP8 | Small smoke-test model. |
 | [`Qwen/Qwen3-8B`](https://huggingface.co/Qwen/Qwen3-8B) | BF16; locally tested with compressed-tensors FP8 | Good general baseline. Disable graph replay for the tested FP8-weight checkpoint. |
 | [`openai/gpt-oss-20b`](https://huggingface.co/openai/gpt-oss-20b) | Official MXFP4 Safetensors | Recommended larger native model. It loaded through built-in `GptOssForCausalLM`/`gpt_oss_mxfp4`, used 14.16 GiB for model memory, and needed no GGUF plugin or remote code. |
-
-Download a small public model:
-
-```powershell
-New-Item -ItemType Directory -Path C:\AI\models -Force | Out-Null
-.\.venv-rocm10\Scripts\hf.exe download Qwen/Qwen3-0.6B `
-  --local-dir C:\AI\models\Qwen3-0.6B
-```
-
-Download the tested larger model without its duplicate reference directories:
-
-```powershell
-.\.venv-rocm10\Scripts\hf.exe download openai/gpt-oss-20b `
-  --local-dir C:\AI\models\gpt-oss-20b `
-  --exclude "original/*" "metal/*"
-```
-
-For a gated model, authenticate interactively instead of placing a Hugging
-Face token in a script or command line:
-
-```powershell
-.\.venv-rocm10\Scripts\hf.exe auth login
-```
-
-The token is stored in the user's Hugging Face cache, outside this repository.
-See the official [Hugging Face authentication documentation](https://huggingface.co/docs/huggingface_hub/package_reference/authentication).
 
 ### Model-format guidance
 
@@ -559,8 +533,8 @@ $env:HIP_VISIBLE_DEVICES = '0'
 ```
 
 This selects the one visible GPU used by the base Windows port. It does not
-enable multi-GPU by itself; authorized users must install and configure the
-separate transport plugin described above.
+enable multi-GPU by itself; install and configure the separate transport
+plugin described above.
 
 ## Measured results
 
