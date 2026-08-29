@@ -176,7 +176,7 @@ auto-selected `ROCM_ATTN` wrapper after both paths were warm.
 - Qwen3-8B and Qwen3-0.6B do not contain native MTP heads. Generic draft-model
   speculation disabled async scheduling and the V2 runner and was almost 10x
   slower on the measured batch. N-gram speculation currently requires the
-  optional `numba` dependency, which is not installed in `.venv211`.
+  optional `numba` dependency, which is not installed in `.venv-rocm10`.
 - The current vLLM tree has no Vulkan platform or execution backend. The
   Windows work in this branch accelerates the ROCm/HIP path. Vulkan performance
   must be handled in a Vulkan-capable runtime rather than routed through these

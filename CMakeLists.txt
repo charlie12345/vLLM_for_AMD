@@ -118,6 +118,26 @@ endif()
 #
 find_package(Torch REQUIRED)
 
+# PyTorch's native-Windows ROCm toolchain uses clang-cl for CXX and clang++
+# for HIP. CMake initializes MODULE linker flags for clang-cl, but places the
+# same raw MSVC switches in HIP's GNU-driver command line. Save those flags so
+# define_extension_target can pass them through the correct compiler-driver
+# syntax, then prevent CMake from adding the raw copies globally. The Windows
+# ROCm bootstrap intentionally uses the single-config Ninja generator.
+if(WIN32 AND PYTORCH_FOUND_HIP AND NOT CMAKE_CONFIGURATION_TYPES)
+  string(TOUPPER "${CMAKE_BUILD_TYPE}" _VLLM_WINDOWS_ROCM_BUILD_TYPE)
+  set(_VLLM_WINDOWS_ROCM_CONFIG_LINKER_FLAGS
+    "${CMAKE_MODULE_LINKER_FLAGS_${_VLLM_WINDOWS_ROCM_BUILD_TYPE}}")
+  set(_VLLM_WINDOWS_ROCM_LINKER_FLAGS
+    "${CMAKE_MODULE_LINKER_FLAGS} ${_VLLM_WINDOWS_ROCM_CONFIG_LINKER_FLAGS}")
+  string(STRIP "${_VLLM_WINDOWS_ROCM_LINKER_FLAGS}"
+    _VLLM_WINDOWS_ROCM_LINKER_FLAGS)
+  separate_arguments(VLLM_WINDOWS_ROCM_MODULE_LINK_OPTIONS NATIVE_COMMAND
+    "${_VLLM_WINDOWS_ROCM_LINKER_FLAGS}")
+  set(CMAKE_MODULE_LINKER_FLAGS "")
+  set(CMAKE_MODULE_LINKER_FLAGS_${_VLLM_WINDOWS_ROCM_BUILD_TYPE} "")
+endif()
+
 # Supported NVIDIA architectures.
 # This check must happen after find_package(Torch) because that's when CMAKE_CUDA_COMPILER_VERSION gets defined
 if(DEFINED CMAKE_CUDA_COMPILER_VERSION AND
@@ -207,6 +227,18 @@ elseif(HIP_FOUND OR PYTORCH_FOUND_HIP)
   # not let cmake recognize .hip files. In order to get cmake to understand the
   # .hip extension automatically, HIP must be enabled explicitly.
   enable_language(HIP)
+
+  # ROCm's Windows wheels use clang++ (the GNU-style driver) for HIP while
+  # CMake still initializes the MSVC debug-information target property.  The
+  # ROCm 10.0 Torch CMake package suppresses only the Embedded variant, so a
+  # RelWithDebInfo build otherwise receives the unsupported `-Zi` option.
+  # Limit the workaround to the HIP language; CXX continues to use clang-cl's
+  # normal Windows debug-information flags.
+  if(WIN32 AND CMAKE_HIP_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_HIP_COMPILE_OPTIONS_MSVC_DEBUG_INFORMATION_FORMAT_Embedded "")
+    set(CMAKE_HIP_COMPILE_OPTIONS_MSVC_DEBUG_INFORMATION_FORMAT_ProgramDatabase "")
+    set(CMAKE_HIP_COMPILE_OPTIONS_MSVC_DEBUG_INFORMATION_FORMAT_EditAndContinue "")
+  endif()
 
   # ROCm 5.X and 6.X
   if (NOT TORCH_NIGHTLY_BUILD AND ROCM_VERSION_DEV_MAJOR GREATER_EQUAL 5 AND
@@ -421,11 +453,42 @@ if(VLLM_GPU_LANG STREQUAL "CUDA" OR VLLM_GPU_LANG STREQUAL "HIP")
         "${TORCH_INCLUDE_DIR}/${_stable_hdr_rel}"
         "${TORCH_SHADOW_INCLUDE_DIR}/${_stable_hdr_rel}")
 
-      execute_process(
-        COMMAND patch --batch --forward -p1
-          "--input=${CMAKE_CURRENT_LIST_DIR}/cmake/patches/pytorch_stable_string.patch"
-        WORKING_DIRECTORY "${TORCH_SHADOW_INCLUDE_DIR}"
-        COMMAND_ERROR_IS_FATAL ANY)
+      if(WIN32)
+        # Native Windows does not provide the POSIX `patch` executable. Apply
+        # the same narrowly scoped hotfix to the shadow copy with CMake, and
+        # fail closed if the expected PyTorch 2.13 text changes.
+        set(_stable_shadow_hdr
+          "${TORCH_SHADOW_INCLUDE_DIR}/${_stable_hdr_rel}")
+        file(READ "${_stable_shadow_hdr}" TORCH_STABLE_PATCHED_CONTENTS)
+        string(REPLACE
+          "// Returns a new std::string; the string in val is deleted."
+          "// Returns a std::string which owns its memory; the string in val is deleted."
+          TORCH_STABLE_PATCHED_CONTENTS "${TORCH_STABLE_PATCHED_CONTENTS}")
+        string(REPLACE
+          "    auto strptr = new std::string(data, length);"
+          "    const auto str = std::string(data, length);"
+          TORCH_STABLE_PATCHED_CONTENTS "${TORCH_STABLE_PATCHED_CONTENTS}")
+        string(REPLACE
+          "    // delete the old string before returning new string"
+          "    // delete the old string"
+          TORCH_STABLE_PATCHED_CONTENTS "${TORCH_STABLE_PATCHED_CONTENTS}")
+        string(REPLACE
+          "    return *strptr;"
+          "    return str;"
+          TORCH_STABLE_PATCHED_CONTENTS "${TORCH_STABLE_PATCHED_CONTENTS}")
+        if(TORCH_STABLE_PATCHED_CONTENTS MATCHES
+           "auto strptr = new std::string")
+          message(FATAL_ERROR
+            "Could not apply the PyTorch stable-string hotfix on Windows")
+        endif()
+        file(WRITE "${_stable_shadow_hdr}" "${TORCH_STABLE_PATCHED_CONTENTS}")
+      else()
+        execute_process(
+          COMMAND patch --batch --forward -p1
+            "--input=${CMAKE_CURRENT_LIST_DIR}/cmake/patches/pytorch_stable_string.patch"
+          WORKING_DIRECTORY "${TORCH_SHADOW_INCLUDE_DIR}"
+          COMMAND_ERROR_IS_FATAL ANY)
+      endif()
 
       include_directories(BEFORE "${TORCH_SHADOW_INCLUDE_DIR}")
     endif()

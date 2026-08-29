@@ -6,9 +6,9 @@
     Automates the repository-local parts of the Windows ROCm installation:
 
     - validates the required Windows, AMD, uv, Git, and Visual Studio setup;
-    - creates or reuses .venv211 with Python 3.12;
+    - creates or reuses an architecture-isolated Python 3.12 environment;
     - installs the pinned AMD ROCm/PyTorch, Triton, and build dependencies;
-    - probes the AMD GPU through vram_guard.ps1 and requires gfx1201;
+    - probes the AMD GPU through vram_guard.ps1 and requires the selected arch;
     - builds and editable-installs this vLLM fork; and
     - performs a second guarded import/device verification.
 
@@ -17,7 +17,16 @@
     user review, and models have separate licenses and storage requirements.
 
 .PARAMETER MaxJobs
-    Maximum parallel native build jobs. Defaults to 16.
+    Maximum parallel native build jobs. Defaults to 8 to preserve desktop
+    responsiveness during large HIP translation units.
+
+.PARAMETER GpuArch
+    ROCm GCN architecture to install and compile. gfx1201 is the validated
+    default. Other accepted RDNA targets are build-supported but unvalidated.
+
+.PARAMETER AllowUnhealthyAdapter
+    Continue when Windows reports an AMD display adapter in a non-OK state.
+    This is unsafe for model execution and exists only for expert diagnostics.
 
 .PARAMETER GuardLimitGiB
     Dedicated-VRAM kill threshold used for the guarded GPU probes.
@@ -39,8 +48,16 @@
 
 [CmdletBinding()]
 param(
+    [ValidateSet(
+        'gfx1030',
+        'gfx1100', 'gfx1101', 'gfx1102', 'gfx1103',
+        'gfx1150', 'gfx1151', 'gfx1152', 'gfx1153',
+        'gfx1200', 'gfx1201'
+    )]
+    [string]$GpuArch = 'gfx1201',
+
     [ValidateRange(1, 256)]
-    [int]$MaxJobs = 16,
+    [int]$MaxJobs = 8,
 
     [ValidateRange(1.0, 256.0)]
     [double]$GuardLimitGiB = 26.0,
@@ -48,7 +65,9 @@ param(
     [ValidateRange(0.0, 256.0)]
     [double]$GuardWarnGiB = 23.0,
 
-    [switch]$PlanOnly
+    [switch]$PlanOnly,
+
+    [switch]$AllowUnhealthyAdapter
 )
 
 Set-StrictMode -Version Latest
@@ -56,20 +75,33 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 $ExpectedPython = '3.12'
-$ExpectedGpuArch = 'gfx1201'
-$TorchVersion = '2.11.0+rocm7.13.0'
-$TorchvisionVersion = '0.26.0+rocm7.13.0'
-$RocmVersion = '7.13.0'
-$TritonVersion = '3.6.0.post26'
-$AmdWheelIndex = 'https://repo.amd.com/rocm/whl/gfx120X-all/'
+$ExpectedGpuArch = $GpuArch
+$TorchVersion = '2.13.0+rocm10.0.0'
+$TorchvisionVersion = '0.28.0+rocm10.0.0'
+$RocmVersion = '10.0.0'
+$TritonVersion = '3.7.1.post27'
+$AmdPytorchWheelIndex = 'https://stable.repo.amd.com/rocm/pytorch/whl-next/'
+$AmdRocmWheelIndex = 'https://stable.repo.amd.com/rocm/core/whl-next/'
 
 $Root = (Resolve-Path -LiteralPath $PSScriptRoot).Path.TrimEnd('\')
-$Venv = Join-Path $Root '.venv211'
+$Venv = if ([string]::IsNullOrWhiteSpace($env:VLLM_VENV)) {
+    $venvName = if ($ExpectedGpuArch -eq 'gfx1201') {
+        '.venv-rocm10'
+    }
+    else {
+        ".venv-rocm10-$ExpectedGpuArch"
+    }
+    Join-Path $Root $venvName
+}
+else {
+    [IO.Path]::GetFullPath($env:VLLM_VENV)
+}
 $VenvPython = Join-Path $Venv 'Scripts\python.exe'
 $Requirements = Join-Path $Root 'requirements\common.txt'
 $BuildScript = Join-Path $Root 'build_windows_rocm.cmd'
 $InstallScript = Join-Path $Root 'install_windows_rocm.cmd'
 $GuardScript = Join-Path $Root 'vram_guard.ps1'
+$RuntimeVerifier = Join-Path $Root 'tools\verify_windows_rocm_runtime.py'
 $Vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
 
 function Write-Step([string]$Message) {
@@ -167,6 +199,7 @@ $requiredFiles = @(
     $BuildScript,
     $InstallScript,
     $GuardScript,
+    $RuntimeVerifier,
     (Join-Path $Root 'env_windows_rocm.cmd'),
     (Join-Path $Root 'pyproject.toml')
 )
@@ -199,14 +232,48 @@ Install the Desktop development with C++ workload, MSVC v143, and a Windows
 
 $amdAdapters = @()
 try {
-    $amdAdapters = @(Get-CimInstance Win32_VideoController |
-        Where-Object { $_.Name -match 'AMD|Radeon' })
+    $amdAdapters = @(Get-PnpDevice -Class Display -PresentOnly -ErrorAction Stop |
+        Where-Object { $_.FriendlyName -match 'AMD|Radeon' } |
+        ForEach-Object {
+            [pscustomobject]@{
+                Name = $_.FriendlyName
+                Status = [string]$_.Status
+                Problem = [string]$_.Problem
+            }
+        })
 }
 catch {
-    Write-Warning "Could not query display adapters: $($_.Exception.Message)"
+    Write-Warning "PnP display query failed; trying bounded CIM: $($_.Exception.Message)"
+    try {
+        $amdAdapters = @(Get-CimInstance Win32_VideoController `
+            -OperationTimeoutSec 5 -ErrorAction Stop |
+            Where-Object { $_.Name -match 'AMD|Radeon' })
+    }
+    catch {
+        Write-Warning "Could not query display adapters: $($_.Exception.Message)"
+    }
 }
 if ($amdAdapters.Count -eq 0) {
     throw 'No AMD/Radeon display adapter was detected. Install the matching AMD driver first.'
+}
+$unhealthyAdapters = @($amdAdapters | Where-Object {
+    $_.Status -and $_.Status -ne 'OK'
+})
+if ($unhealthyAdapters.Count -gt 0) {
+    $details = ($unhealthyAdapters | ForEach-Object {
+        '{0}: status={1}, problem={2}' -f $_.Name, $_.Status, $_.Problem
+    }) -join '; '
+    $message = @"
+Windows reports an unhealthy AMD display adapter: $details
+Restart Windows (cold-power-cycle if necessary) and verify every intended GPU
+shows Device Manager status OK before building or running vLLM.
+"@
+    if ($AllowUnhealthyAdapter) {
+        Write-Warning "$message Continuing only because -AllowUnhealthyAdapter was specified."
+    }
+    else {
+        throw "$message Expert diagnostics can bypass this check with -AllowUnhealthyAdapter."
+    }
 }
 
 if ($Root.Length -gt 80) {
@@ -214,7 +281,8 @@ if ($Root.Length -gt 80) {
 }
 
 try {
-    $system = Get-CimInstance Win32_ComputerSystem
+    $system = Get-CimInstance Win32_ComputerSystem `
+        -OperationTimeoutSec 5 -ErrorAction Stop
     $ramGiB = [math]::Round($system.TotalPhysicalMemory / 1GB, 1)
     if ($ramGiB -lt 32) {
         Write-Warning "Only $ramGiB GiB of system RAM was detected; 32 GiB is the practical minimum."
@@ -240,7 +308,9 @@ catch {
 
 Write-Detail 'Repository' $Root
 Write-Detail 'Expected GPU' $ExpectedGpuArch
-Write-Detail 'AMD adapter' (($amdAdapters | ForEach-Object Name) -join '; ')
+Write-Detail 'AMD adapter' (($amdAdapters | ForEach-Object {
+    if ($_.Status) { "$($_.Name) [$($_.Status)]" } else { $_.Name }
+}) -join '; ')
 Write-Detail 'System RAM GiB' ([string]$ramGiB)
 Write-Detail 'Free disk GiB' ([string]$freeGiB)
 Write-Detail 'uv' $uv
@@ -251,9 +321,9 @@ Write-Detail 'VRAM guard' "$GuardWarnGiB GiB warn / $GuardLimitGiB GiB kill"
 
 if ($PlanOnly) {
     Write-Step 'Plan'
-    Write-Host '1. Create or reuse .venv211 with Python 3.12.'
-    Write-Host '2. Install the pinned ROCm 7.13, PyTorch 2.11, and Triton stack.'
-    Write-Host '3. Run a fail-closed guarded Torch/HIP/gfx1201 probe.'
+    Write-Host "1. Create or reuse $Venv with Python 3.12."
+    Write-Host '2. Install the pinned ROCm 10.0, PyTorch 2.13, and Triton stack.'
+    Write-Host "3. Run a fail-closed guarded Torch/HIP/$ExpectedGpuArch probe."
     Write-Host '4. Build the native C++/HIP extensions with clang-cl.'
     Write-Host '5. Editable-install vLLM and run a guarded import/device probe.'
     Write-Host "`nPlanOnly completed; no files, packages, GPU contexts, or builds were changed."
@@ -290,11 +360,12 @@ Invoke-Native `
     'Install pinned AMD ROCm and PyTorch wheels' `
     $uv `
     ($uvPip + @(
-        '--extra-index-url', $AmdWheelIndex,
+        '--extra-index-url', $AmdPytorchWheelIndex,
+        '--extra-index-url', $AmdRocmWheelIndex,
         '--index-strategy', 'unsafe-best-match',
-        "torch==$TorchVersion",
-        "torchvision==$TorchvisionVersion",
-        "rocm[devel]==$RocmVersion"
+        "torch[device-$ExpectedGpuArch]==$TorchVersion",
+        "torchvision[device-$ExpectedGpuArch]==$TorchvisionVersion",
+        "rocm[devel,device-$ExpectedGpuArch]==$RocmVersion"
     ))
 
 Invoke-Native `
@@ -328,18 +399,19 @@ $torchProbe = @"
 import json
 import torch
 
-if not torch.cuda.is_available():
+if not torch.accelerator.is_available():
     raise SystemExit('Torch cannot see an AMD GPU through HIP.')
 if torch.version.hip is None:
     raise SystemExit('This is not a ROCm/HIP PyTorch build.')
 
-properties = torch.cuda.get_device_properties(0)
+device_module = torch.get_device_module(torch.accelerator.current_accelerator())
+properties = device_module.get_device_properties(0)
 architecture = str(properties.gcnArchName)
 architecture_base = architecture.split(':', 1)[0]
 result = {
     'torch': torch.__version__,
     'hip': torch.version.hip,
-    'device': torch.cuda.get_device_name(0),
+    'device': device_module.get_device_name(0),
     'architecture': architecture,
 }
 print(json.dumps(result, sort_keys=True))
@@ -347,16 +419,23 @@ print(json.dumps(result, sort_keys=True))
 if architecture_base != '$ExpectedGpuArch':
     raise SystemExit(
         f'Expected $ExpectedGpuArch, but Torch reported {architecture}. '
-        'This setup script only automates the tested R9700/RDNA4 target.'
+        'Use -GpuArch only for the architecture physically installed.'
     )
 "@
 Invoke-GuardedProbe -Name 'ROCm device verification' -PythonCode $torchProbe
 
 $previousMaxJobs = [Environment]::GetEnvironmentVariable('MAX_JOBS', 'Process')
 $previousVllmRoot = [Environment]::GetEnvironmentVariable('VLLM_ROOT', 'Process')
+$previousVllmRocmArch = [Environment]::GetEnvironmentVariable(
+    'VLLM_ROCM_ARCH',
+    'Process'
+)
+$previousVllmVenv = [Environment]::GetEnvironmentVariable('VLLM_VENV', 'Process')
 try {
     $env:MAX_JOBS = [string]$MaxJobs
     $env:VLLM_ROOT = $Root + '\'
+    $env:VLLM_ROCM_ARCH = $ExpectedGpuArch
+    $env:VLLM_VENV = $Venv
 
     Invoke-Native `
         'Build vLLM native Windows ROCm extensions' `
@@ -379,21 +458,28 @@ finally {
         $previousVllmRoot,
         'Process'
     )
+    [Environment]::SetEnvironmentVariable(
+        'VLLM_ROCM_ARCH',
+        $previousVllmRocmArch,
+        'Process'
+    )
+    [Environment]::SetEnvironmentVariable(
+        'VLLM_VENV',
+        $previousVllmVenv,
+        'Process'
+    )
 }
 
 $installProbe = @"
-import json
-import torch
-import vllm
+import runpy
+import sys
 
-properties = torch.cuda.get_device_properties(0)
-print(json.dumps({
-    'vllm': vllm.__version__,
-    'torch': torch.__version__,
-    'hip': torch.version.hip,
-    'device': torch.cuda.get_device_name(0),
-    'architecture': str(properties.gcnArchName),
-}, sort_keys=True))
+sys.argv = [
+    r'$RuntimeVerifier',
+    '--expected-arch',
+    '$ExpectedGpuArch',
+]
+runpy.run_path(r'$RuntimeVerifier', run_name='__main__')
 "@
 Invoke-GuardedProbe -Name 'Installed vLLM verification' -PythonCode $installProbe
 

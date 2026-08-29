@@ -660,5 +660,22 @@ function (define_extension_target MOD_NAME)
     target_link_libraries(${MOD_NAME} PRIVATE torch ${TORCH_LIBRARIES} ${ARG_LIBRARIES})
   endif()
 
+  # Native Windows ROCm uses two Clang driver styles in one build. Preserve
+  # CMake's Windows MODULE linker flags verbatim for clang-cl CXX targets, but
+  # route them through clang++'s linker wrapper for HIP targets. See the
+  # corresponding capture/reset immediately after find_package(Torch).
+  if(WIN32 AND VLLM_WINDOWS_ROCM_MODULE_LINK_OPTIONS)
+    foreach(_VLLM_WINDOWS_ROCM_LINK_OPTION
+            IN LISTS VLLM_WINDOWS_ROCM_MODULE_LINK_OPTIONS)
+      if(ARG_LANGUAGE STREQUAL "HIP")
+        target_link_options(${MOD_NAME} PRIVATE
+          "LINKER:${_VLLM_WINDOWS_ROCM_LINK_OPTION}")
+      else()
+        target_link_options(${MOD_NAME} PRIVATE
+          "${_VLLM_WINDOWS_ROCM_LINK_OPTION}")
+      endif()
+    endforeach()
+  endif()
+
   install(TARGETS ${MOD_NAME} LIBRARY DESTINATION ${ARG_DESTINATION} COMPONENT ${MOD_NAME})
 endfunction()
