@@ -237,7 +237,28 @@ steps:
     PREFILL_BLOCK_SIZE: "256"
     DECODE_BLOCK_SIZE: "256"
     MODEL_NAMES: "deepseek-ai/DeepSeek-V4-Flash"
+    VLLM_ENGINE_READY_TIMEOUT_S: "900"
     VLLM_SERVE_EXTRA_ARGS: "--trust-remote-code,--kv-cache-dtype,fp8"
+  commands:
+    - bash /vllm-workspace/.buildkite/scripts/install-kv-connectors.sh
+    - bash v1/kv_connector/nixl_integration/run_accuracy_test.sh
+
+- label: Kimi-Linear-48B-A3B Disaggregated DP EP
+  key: kimi-linear-disaggregated
+  timeout_in_minutes: 60
+  device: h200
+  optional: true
+  working_dir: "/vllm-workspace/tests"
+  num_devices: 4
+  env:
+    ENABLE_HMA_FLAG: "1"
+    DP_EP: "1"
+    GPU_MEMORY_UTILIZATION: "0.9"
+    VLLM_SSM_CONV_STATE_LAYOUT: "DS"
+    PREFILLER_TP_SIZE: "2"
+    DECODER_TP_SIZE: "2"
+    MODEL_NAMES: "moonshotai/Kimi-Linear-48B-A3B-Instruct"
+    VLLM_SERVE_EXTRA_ARGS: "--trust-remote-code,--mamba-cache-mode align,--max-model-len 32768"
   commands:
     - bash /vllm-workspace/.buildkite/scripts/install-kv-connectors.sh
     - bash v1/kv_connector/nixl_integration/run_accuracy_test.sh

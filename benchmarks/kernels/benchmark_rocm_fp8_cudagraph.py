@@ -82,7 +82,7 @@ def main() -> None:
     eager_output = scaled_mm(args.mode, a, b, scale_a, scale_b)
     for _ in range(args.warmups):
         scaled_mm(args.mode, a, b, scale_a, scale_b)
-    torch.cuda.synchronize()
+    torch.accelerator.synchronize()
     print("eager warmup complete; capturing", flush=True)
 
     graph = torch.cuda.CUDAGraph()
@@ -93,7 +93,7 @@ def main() -> None:
     start = time.perf_counter()
     for replay in range(args.replays):
         graph.replay()
-        torch.cuda.synchronize()
+        torch.accelerator.synchronize()
         print(f"replay {replay + 1}/{args.replays} complete", flush=True)
     elapsed = time.perf_counter() - start
 

@@ -5,8 +5,6 @@ import argparse
 import inspect
 import signal
 
-from vllm.utils.async_utils import run_async
-
 from vllm import envs
 from vllm.config import VllmConfig
 from vllm.engine.arg_utils import AsyncEngineArgs
@@ -22,6 +20,7 @@ from vllm.entrypoints.openai.cli_args import (
 from vllm.entrypoints.serve.utils.api_utils import VLLM_SUBCMD_PARSER_EPILOG
 from vllm.logger import init_logger
 from vllm.utils.argparse_utils import FlexibleArgumentParser
+from vllm.utils.async_utils import run_async
 
 logger = init_logger(__name__)
 

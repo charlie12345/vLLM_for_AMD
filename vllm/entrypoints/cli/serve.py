@@ -5,8 +5,6 @@ import argparse
 import signal
 import time
 
-from vllm.utils.async_utils import run_async
-
 import vllm
 import vllm.envs as envs
 from vllm.entrypoints.cli.types import CLISubcommand
@@ -19,6 +17,7 @@ from vllm.entrypoints.serve.utils.api_utils import VLLM_SUBCMD_PARSER_EPILOG
 from vllm.logger import init_logger
 from vllm.usage.usage_lib import UsageContext
 from vllm.utils.argparse_utils import FlexibleArgumentParser
+from vllm.utils.async_utils import run_async
 from vllm.utils.network_utils import get_tcp_uri
 from vllm.v1.engine.utils import CoreEngineProcManager, launch_core_engines
 from vllm.v1.executor import Executor
@@ -326,12 +325,12 @@ def run_multi_api_server(args: argparse.Namespace):
         defer_api_server_ports=not (rust_frontend_path or is_ray_dp),
     )
 
-    with launch_core_engines(vllm_config, executor_class, log_stats, addresses) as (
-        local_engine_manager,
-        coordinator,
-        addresses,
-        tensor_queue,
-    ):
+    with launch_core_engines(
+        vllm_config, executor_class, log_stats, addresses
+    ) as engine_launch:
+        local_engine_manager = engine_launch.engine_manager
+        coordinator = engine_launch.coordinator
+        addresses = engine_launch.addresses
         stats_update_address = (
             coordinator.get_stats_publish_address() if coordinator else None
         )
@@ -352,6 +351,7 @@ def run_multi_api_server(args: argparse.Namespace):
                 output_address=addresses.outputs[0],
                 engine_start_index=expected_engine_start_index,
                 engine_count=expected_engine_count,
+                data_parallel_size=parallel_config.data_parallel_size,
                 stats_update_address=stats_update_address,
             )
         else:
@@ -364,7 +364,7 @@ def run_multi_api_server(args: argparse.Namespace):
                 input_addresses=addresses.inputs,
                 output_addresses=addresses.outputs,
                 stats_update_address=stats_update_address,
-                tensor_queue=tensor_queue,
+                tensor_queue=engine_launch.tensor_queue,
             )
 
             if not is_ray_dp:
@@ -376,6 +376,11 @@ def run_multi_api_server(args: argparse.Namespace):
                 )
                 addresses.inputs = actual_inputs
                 addresses.outputs = actual_outputs
+
+        # Set frontend processes to watch during engine startup.
+        # If any of these processes exit before the engines are up, the engine startup
+        # will be aborted with an error.
+        engine_launch.watched_frontend_processes = api_server_manager.processes
 
     # Wait for API servers.
     try:

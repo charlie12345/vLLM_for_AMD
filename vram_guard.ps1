@@ -3,8 +3,9 @@
     Run a vLLM command under a watchdog: kills it on VRAM exhaustion or a stall.
 
 .DESCRIPTION
-    Two failure modes on this box take the whole machine down, and this guards
-    against both.
+    Two failure modes on this box can take the whole machine down. This script
+    reduces the user-mode risk from both but cannot recover a kernel driver or
+    firmware hang.
 
     1. VRAM exhaustion. vLLM claims `gpu-memory-utilization` of the card and
        sizes its KV cache to fill whatever the weights leave over, so even a
@@ -114,7 +115,8 @@ function Update-TrackedProcessTree(
     [System.Collections.Generic.HashSet[int]]$TrackedPids
 ) {
     try {
-        $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+        $processes = @(Get-CimInstance Win32_Process `
+            -OperationTimeoutSec $CounterTimeoutSec -ErrorAction Stop |
             Select-Object ProcessId, ParentProcessId)
         do {
             $added = $false
@@ -179,7 +181,22 @@ else {
 if ($StallLogPath) { Write-Guard "stall guard: $StallLogPath idle > ${StallSec}s" }
 Write-Guard "command: $Command"
 
-$proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $Command -PassThru -WindowStyle Hidden
+$startInfo = New-Object System.Diagnostics.ProcessStartInfo
+$startInfo.FileName = if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }
+# cmd.exe requires an extra outer quote when /C receives a command whose
+# executable path is itself quoted. Start-Process flattens ArgumentList and can
+# silently lose that boundary, causing a quoted Python path to exit before its
+# redirection is created. Assign the exact command line through ProcessStartInfo
+# so paths with spaces and shell redirection remain intact on PowerShell 5.1+.
+$startInfo.Arguments = '/D /S /C "' + $Command + '"'
+$startInfo.UseShellExecute = $false
+$startInfo.CreateNoWindow = $true
+$proc = New-Object System.Diagnostics.Process
+$proc.StartInfo = $startInfo
+if (-not $proc.Start()) {
+    Write-Guard 'ERROR: failed to start guarded child process.'
+    exit 97
+}
 Write-Guard "child pid $($proc.Id)"
 $trackedPids = [System.Collections.Generic.HashSet[int]]::new()
 [void]$trackedPids.Add($proc.Id)

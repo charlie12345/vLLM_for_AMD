@@ -3,7 +3,7 @@ vLLM for AMD on Native Windows
 This distribution is based on the vLLM project:
 https://github.com/vllm-project/vllm
 
-Upstream base: vLLM v0.27.1, commit 6e448d0
+Upstream base: vLLM v0.28.0, commit 2cf0a69
 
 vLLM and this modified source distribution are provided under the Apache
 License, Version 2.0. See the LICENSE file in this repository.

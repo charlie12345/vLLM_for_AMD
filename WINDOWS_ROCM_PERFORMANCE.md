@@ -2,9 +2,9 @@
 
 These results are for a Radeon AI PRO R9700 (gfx1201, 32 GiB), ROCm 7.13.0,
 PyTorch 2.11, and models at a maximum model length of 2,048. The current source
-base is vLLM v0.27.1. The GPU also
-drives the desktop. Every model run below used `vram_guard.ps1` with a 26 GiB
-hard limit and a per-run stall log.
+is based on vLLM v0.28.0; v0.27.1 was the previously validated baseline. The
+GPU also drives the desktop. Every model run below used `vram_guard.ps1` with a
+26 GiB hard limit and a per-run stall log.
 
 ## v0.27.1 update validation
 
@@ -176,7 +176,7 @@ auto-selected `ROCM_ATTN` wrapper after both paths were warm.
 - Qwen3-8B and Qwen3-0.6B do not contain native MTP heads. Generic draft-model
   speculation disabled async scheduling and the V2 runner and was almost 10x
   slower on the measured batch. N-gram speculation currently requires the
-  optional `numba` dependency, which is not installed in `.venv211`.
+  optional `numba` dependency, which is not installed in `.venv-rocm10`.
 - The current vLLM tree has no Vulkan platform or execution backend. The
   Windows work in this branch accelerates the ROCm/HIP path. Vulkan performance
   must be handled in a Vulkan-capable runtime rather than routed through these

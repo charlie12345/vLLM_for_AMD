@@ -6,10 +6,10 @@ import os
 import sys
 import threading
 import weakref
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
-from multiprocessing import Process, connection
+from multiprocessing import connection
 from multiprocessing.process import BaseProcess
 from multiprocessing.queues import Queue
 from typing import TYPE_CHECKING, cast
@@ -33,7 +33,7 @@ from vllm.utils.system_utils import get_mp_context
 from vllm.v1.engine.coordinator import DPCoordinator
 from vllm.v1.executor import Executor
 from vllm.v1.executor.ray_utils import WORKER_SPECIFIC_ENV_VARS
-from vllm.v1.utils import get_engine_client_zmq_addr, shutdown
+from vllm.v1.utils import _SubprocessWrapper, get_engine_client_zmq_addr, shutdown
 
 if TYPE_CHECKING:
     from ray.util.placement_group import PlacementGroup
@@ -1051,20 +1051,29 @@ def get_engine_zmq_addresses(
     )
 
 
+FrontendProcess = BaseProcess | _SubprocessWrapper
+
+
+@dataclass
+class CoreEngineLaunch:
+    """Resources and startup barrier for launched engine processes."""
+
+    engine_manager: CoreEngineProcManager | CoreEngineActorManager | None
+    coordinator: DPCoordinator | None
+    addresses: EngineZmqAddresses
+    tensor_queue: Queue | None
+    # Frontend processes to watch during engine startup; may be assigned by
+    # the caller before the startup barrier runs on context manager exit.
+    watched_frontend_processes: Sequence[FrontendProcess] = ()
+
+
 @contextlib.contextmanager
 def launch_core_engines(
     vllm_config: VllmConfig,
     executor_class: type[Executor],
     log_stats: bool,
     addresses: EngineZmqAddresses,
-) -> Iterator[
-    tuple[
-        CoreEngineProcManager | CoreEngineActorManager | None,
-        DPCoordinator | None,
-        EngineZmqAddresses,
-        Queue | None,
-    ]
-]:
+) -> Iterator[CoreEngineLaunch]:
     """Launch engine and DP coordinator processes as needed."""
 
     parallel_config = vllm_config.parallel_config
@@ -1120,7 +1129,9 @@ def launch_core_engines(
             log_stats=log_stats,
         )
 
-        yield engine_actor_manager, coordinator, addresses, tensor_queue
+        yield CoreEngineLaunch(
+            engine_actor_manager, coordinator, addresses, tensor_queue
+        )
         return
 
     if offline_mode:
@@ -1155,11 +1166,11 @@ def launch_core_engines(
     if parallel_config.enable_elastic_ep:
         handshake_local_only = False
 
-    # Preserve "port=0 means auto-pick" for the handshake address, which
-    # is consumed by engines spawned in this process and so cannot defer
-    # port resolution to bind time.
-    rpc_port = parallel_config.data_parallel_rpc_port or get_open_port()
-    handshake_address = get_engine_client_zmq_addr(handshake_local_only, host, rpc_port)
+    handshake_address = get_engine_client_zmq_addr(
+        handshake_local_only,
+        host,
+        parallel_config.data_parallel_rpc_port,
+    )
 
     if local_engines_only and dp_rank > 0:
         assert not handshake_local_only
@@ -1189,30 +1200,27 @@ def launch_core_engines(
         else:
             local_engine_manager = None
 
-        yield local_engine_manager, coordinator, addresses, tensor_queue
-
-        # Now wait for engines to start.
+        launch = CoreEngineLaunch(
+            local_engine_manager, coordinator, addresses, tensor_queue
+        )
+        yield launch
         wait_for_engine_startup(
             handshake_socket,
-            addresses,
             engines_to_handshake,
             parallel_config,
             dp_size > 1 and vllm_config.model_config.is_moe,
             vllm_config.cache_config,
-            local_engine_manager,
-            coordinator.proc if coordinator else None,
+            launch,
         )
 
 
 def wait_for_engine_startup(
     handshake_socket: zmq.Socket,
-    addresses: EngineZmqAddresses,
     core_engines: list[CoreEngine],
     parallel_config: ParallelConfig,
     coordinated_dp: bool,
     cache_config: CacheConfig,
-    proc_manager: CoreEngineProcManager | None,
-    coord_process: Process | None,
+    launch: CoreEngineLaunch,
 ):
     # Wait for engine core process(es) to send ready messages.
     local_count = parallel_config.data_parallel_size_local
@@ -1227,33 +1235,83 @@ def wait_for_engine_startup(
         and not parallel_config.data_parallel_external_lb
     )
 
+    coord_process = launch.coordinator.proc if launch.coordinator else None
+    frontend_process_by_fd: dict[int, FrontendProcess] = {}
+
     # A multiprocessing sentinel is a pipe fd on POSIX, which zmq_poll accepts
     # alongside sockets. On Windows it is a Win32 event HANDLE, which zmq_poll
     # rejects outright ("not a socket"), so there we poll the handshake socket
     # alone and check for dead children between polls instead.
     poll_sentinels = sys.platform != "win32"
     if poll_sentinels:
-        if proc_manager is not None:
-            for sentinel in proc_manager.sentinels():
+        if isinstance(launch.engine_manager, CoreEngineProcManager):
+            for sentinel in launch.engine_manager.sentinels():
                 poller.register(sentinel, zmq.POLLIN)
         if coord_process is not None:
             poller.register(coord_process.sentinel, zmq.POLLIN)
+        for proc in launch.watched_frontend_processes:
+            sentinel = proc.sentinel
+            fd = sentinel if isinstance(sentinel, int) else sentinel.fileno()
+            frontend_process_by_fd[fd] = proc
+            poller.register(fd, zmq.POLLIN)
 
     def finished_procs() -> dict[str, int]:
-        finished = proc_manager.finished_procs() if proc_manager else {}
+        finished = (
+            launch.engine_manager.finished_procs()
+            if isinstance(launch.engine_manager, CoreEngineProcManager)
+            else {}
+        )
         if coord_process is not None and coord_process.exitcode is not None:
             finished[coord_process.name] = coord_process.exitcode
         return finished
 
+    def failed_frontend_procs(
+        events: list[tuple[zmq.Socket | int, int]] | None = None,
+    ) -> dict[str, int | None]:
+        event_fds = {event_fd for event_fd, _ in events or ()}
+        return {
+            proc.name: proc.exitcode
+            for fd, proc in frontend_process_by_fd.items()
+            if proc.exitcode is not None or fd in event_fds
+        } | {
+            proc.name: proc.exitcode
+            for proc in launch.watched_frontend_processes
+            if proc.exitcode is not None
+        }
+
+    def raise_startup_failure(
+        events: list[tuple[zmq.Socket | int, int]] | None = None,
+    ) -> None:
+        finished = finished_procs()
+        failed_frontends = failed_frontend_procs(events)
+        if failed_frontends and not finished:
+            raise RuntimeError(
+                "Frontend process failed during engine core initialization. "
+                "See root cause above. "
+                f"Failed frontend proc(s): {failed_frontends}"
+            )
+        raise RuntimeError(
+            "Engine core initialization failed. "
+            "See root cause above. "
+            f"Failed core proc(s): {finished}"
+            + (
+                f", failed frontend proc(s): {failed_frontends}"
+                if failed_frontends
+                else ""
+            )
+        )
+
     while any(conn_pending) or any(start_pending):
         events = poller.poll(STARTUP_POLL_PERIOD_MS)
         if not events:
-            if not poll_sentinels and (finished := finished_procs()):
-                raise RuntimeError(
-                    "Engine core initialization failed. "
-                    "See root cause above. "
-                    f"Failed core proc(s): {finished}"
+            if not poll_sentinels and (
+                finished_procs()
+                or any(
+                    proc.exitcode is not None
+                    for proc in launch.watched_frontend_processes
                 )
+            ):
+                raise_startup_failure()
             if any(conn_pending):
                 logger.debug(
                     "Waiting for %d local, %d remote core engine proc(s) to connect.",
@@ -1266,12 +1324,7 @@ def wait_for_engine_startup(
                 )
             continue
         if len(events) > 1 or events[0][0] != handshake_socket:
-            # One of the local core processes exited.
-            raise RuntimeError(
-                "Engine core initialization failed. "
-                "See root cause above. "
-                f"Failed core proc(s): {finished_procs()}"
-            )
+            raise_startup_failure(events)
 
         # Receive HELLO and READY messages from the input socket.
         eng_identity, ready_msg_bytes = handshake_socket.recv_multipart()
@@ -1310,7 +1363,7 @@ def wait_for_engine_startup(
             # Send init message with DP config info.
             init_message = msgspec.msgpack.encode(
                 EngineHandshakeMetadata(
-                    addresses=addresses,
+                    addresses=launch.addresses,
                     parallel_config={
                         k: getattr(parallel_config, k)
                         for k in (

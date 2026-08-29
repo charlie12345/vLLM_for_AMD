@@ -15,16 +15,21 @@ Run the real vLLM engine directly on an AMD GPU in native Windows: no WSL,
 Linux VM, Docker container, CUDA translation layer, or GGUF plugin required.
 
 This is an experimental, community-maintained fork of
-[vLLM](https://github.com/vllm-project/vllm), currently based on vLLM v0.27.1.
+[vLLM](https://github.com/vllm-project/vllm), currently based on vLLM v0.28.0.
 It is validated on Windows 11 with a Radeon AI PRO R9700 (RDNA4, `gfx1201`) and
 AMD's Windows ROCm/PyTorch wheels. It provides an OpenAI-compatible server,
 offline benchmarks, FP8/MXFP4 support where vLLM has a compatible kernel, and a
 fail-closed VRAM watchdog for desktop GPUs.
 
 > [!WARNING]
-> This is not an official AMD or vLLM release. The tested stack is version
-> pinned, single-GPU only, and still experimental. Read
-> [VRAM safety](#vram-safety) before loading a model.
+> **Development status and risk notice:** This is experimental,
+> community-maintained software, not an official AMD or vLLM release. It may
+> crash or hang, reset a graphics driver, exhaust memory, produce incorrect
+> output, or cause loss of unsaved work. Use it at your own risk, keep backups,
+> validate important output, and monitor GPU temperature, power, and memory.
+> It is not intended for production, safety-critical, or unattended operation.
+> The project is provided without warranty under the Apache License 2.0; this
+> operational notice supplements, and does not alter, that license.
 
 ## Project status
 
@@ -32,13 +37,13 @@ fail-closed VRAM watchdog for desktop GPUs.
 | --- | --- |
 | Host OS | Native Windows 11 x64 |
 | Tested GPU | AMD Radeon AI PRO R9700, RDNA4 `gfx1201`, 32 GiB |
-| vLLM base | v0.27.1, base commit `6e448d0` |
+| vLLM base | v0.28.0, base commit `2cf0a69` |
 | Python | 3.12.10 |
-| PyTorch | 2.11.0 + ROCm 7.13.0 |
-| ROCm SDK | 7.13.0 Python wheels, including development tools |
-| Triton | `triton-windows` 3.6.0.post26 |
+| PyTorch | 2.13.0 + ROCm 10.0.0 |
+| ROCm SDK | 10.0.0 Python wheels, including development tools |
+| Triton | `triton-windows` 3.7.1.post27 |
 | Serving | OpenAI-compatible HTTP API |
-| Parallelism | One process, one GPU; no tensor/pipeline multi-GPU |
+| Parallelism | Single GPU by default; optional external multi-GPU transport plugin |
 | Model files | Hugging Face/Safetensors formats; no GGUF plugin included |
 | Vulkan | Not used by this vLLM backend |
 
@@ -109,6 +114,26 @@ The important porting work includes:
 See [WINDOWS_ROCM_PERFORMANCE.md](WINDOWS_ROCM_PERFORMANCE.md) for measured
 results, profiles, and current kernel limitations.
 
+### Optional Windows multi-GPU transport plugin
+
+This repository deliberately remains a focused Windows port of vLLM. It does
+not embed the Direct-RCCL/D3D12 transport bridge in the vLLM source tree. The
+separate, private
+[`windows-amd-vllm-multigpu`](https://github.com/charlie12345/windows-amd-vllm-multigpu)
+repository installs that bridge as an external plugin for authorized users.
+
+The plugin must be installed into the **same Python environment** as this fork
+and against the exact vLLM commit recorded in the plugin's pin file. Do not use
+it with stock Linux vLLM or an arbitrary native-Windows vLLM wheel. Its
+installer fails closed when the source commit, Python environment, ROCm ABI, or
+bridge binaries do not match. Follow the plugin repository's vLLM host guide;
+do not copy individual DLLs into this source tree.
+
+The plugin provides one synchronized engine across multiple Windows AMD GPUs;
+it is not a launcher for unrelated single-GPU servers. Direct-RCCL is the
+primary process-per-GPU collective path. D3D12 and hybrid routing remain
+experimental fallbacks with narrower validated message ranges.
+
 ## Requirements
 
 ### Hardware and operating system
@@ -134,16 +159,16 @@ results, profiles, and current kernel limitations.
 | Visual Studio 2022 Build Tools | MSVC v143, Desktop development with C++, Windows SDK | Supplies the Windows compiler, linker, headers, and libraries. The current script expects the standard Build Tools installation path. |
 | CMake | 4.4.2 | Required for the tested `clang-cl` HIP configuration. CMake 3.31 failed during configuration. |
 | Ninja | 1.13 | Drives the native extension build. |
-| ROCm SDK development wheels | 7.13.0 | Supply HIP, Clang, device libraries, headers, and math libraries inside the Python environment. |
-| PyTorch ROCm wheel | 2.11.0 + ROCm 7.13.0 | Tensor runtime and AMD GPU integration. |
-| `triton-windows` | 3.6.0.post26 | Compiles vLLM's Triton kernels on native Windows. |
+| ROCm SDK development wheels | 10.0.0 | Supply HIP, Clang, device libraries, headers, and math libraries inside the Python environment. |
+| PyTorch ROCm wheel | 2.13.0 + ROCm 10.0.0 | Tensor runtime and AMD GPU integration. |
+| `triton-windows` | 3.7.1.post27 | Compiles vLLM's Triton kernels on native Windows. |
 
 AMD notes that the complete Linux ROCm stack is not present on Windows. This
 project uses the Windows-supported HIP/ROCm components packaged with AMD's
 PyTorch and ROCm SDK wheels. AMD's [TheRock releases](https://github.com/ROCm/TheRock/blob/main/RELEASES.md)
 document the current Windows packages and GPU-specific `device-*` targets.
-The tested Torch 2.11/ROCm 7.13 packages are newer than AMD's current stable
-Windows support matrix and should be treated as a pinned preview stack.
+The tested Torch 2.13/ROCm 10.0 packages are version-pinned. Treat any newer
+combination as unvalidated until the source build and runtime tests pass.
 
 ### Do I need Vulkan?
 
@@ -197,13 +222,28 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\setup_windows_rocm.ps1
 ```
 
+The default is the validated R9700 target (`-GpuArch gfx1201`) and eight native
+build workers. For example, a Radeon RX 7900 XTX is RDNA3 `gfx1100`, not RDNA4:
+
+```powershell
+.\setup_windows_rocm.ps1 -GpuArch gfx1100 -PlanOnly
+.\setup_windows_rocm.ps1 -GpuArch gfx1100
+```
+
+Non-`gfx1201` environments use an architecture-suffixed virtual environment so
+incompatible device libraries and native objects are not silently reused.
+Accepted targets reflect the ROCm 10 package metadata and vLLM build list; they
+do not imply model-level validation. See
+[Building for a different AMD architecture](#building-for-a-different-amd-architecture).
+
 `-PlanOnly` checks Windows, the AMD adapter, Git, `uv`, Visual Studio, system
 RAM, disk headroom, and repository files without installing packages, opening a
 GPU context, or building anything. The full run then:
 
-1. Creates or reuses `.venv211` with Python 3.12.
-2. Installs the exact ROCm 7.13, PyTorch 2.11, and Triton packages below.
-3. Verifies Torch/HIP and requires `gfx1201` through the fail-closed VRAM guard.
+1. Creates or reuses an architecture-isolated Python 3.12 environment.
+2. Installs the exact ROCm 10.0, PyTorch 2.13, and Triton packages below.
+3. Verifies Torch/HIP and requires the selected GFX target through the
+   fail-closed VRAM guard.
 4. Builds and editable-installs the native Windows ROCm extensions.
 5. Runs a second guarded vLLM import and device verification.
 
@@ -215,22 +255,23 @@ for troubleshooting and auditing the automated process.
 ### 3. Create the serving environment
 
 ```powershell
-uv venv --python 3.12 .venv211
+uv venv --python 3.12 .venv-rocm10
 
-uv pip install --python .\.venv211\Scripts\python.exe `
-  --extra-index-url https://repo.amd.com/rocm/whl/gfx120X-all/ `
+uv pip install --python .\.venv-rocm10\Scripts\python.exe `
+  --extra-index-url https://stable.repo.amd.com/rocm/pytorch/whl-next/ `
+  --extra-index-url https://stable.repo.amd.com/rocm/core/whl-next/ `
   --index-strategy unsafe-best-match `
-  "torch==2.11.0+rocm7.13.0" `
-  "torchvision==0.26.0+rocm7.13.0" `
-  "rocm[devel]==7.13.0"
+  "torch[device-gfx1201]==2.13.0+rocm10.0.0" `
+  "torchvision[device-gfx1201]==0.28.0+rocm10.0.0" `
+  "rocm[devel,device-gfx1201]==10.0.0"
 
-uv pip install --python .\.venv211\Scripts\python.exe `
-  "triton-windows==3.6.0.post26" winloop
+uv pip install --python .\.venv-rocm10\Scripts\python.exe `
+  "triton-windows==3.7.1.post27" winloop
 
-uv pip install --python .\.venv211\Scripts\python.exe `
+uv pip install --python .\.venv-rocm10\Scripts\python.exe `
   -r .\requirements\common.txt
 
-uv pip install --python .\.venv211\Scripts\python.exe `
+uv pip install --python .\.venv-rocm10\Scripts\python.exe `
   "cmake==4.4.2" ninja "packaging>=24.2" `
   "setuptools>=77,<80" "setuptools-scm>=8" `
   "setuptools-rust>=1.9" wheel "jinja2>=3.1.6"
@@ -244,9 +285,9 @@ install the tested core serving stack while preserving AMD's ROCm Torch wheel.
 ### 4. Verify ROCm before building vLLM
 
 ```powershell
-.\.venv211\Scripts\python.exe -m rocm_sdk test
+.\.venv-rocm10\Scripts\python.exe -m rocm_sdk test
 
-.\.venv211\Scripts\python.exe -c `
+.\.venv-rocm10\Scripts\python.exe -c `
   "import torch; print(torch.__version__); print(torch.version.hip); print(torch.cuda.get_device_name(0)); print(torch.cuda.get_device_properties(0).gcnArchName)"
 ```
 
@@ -262,12 +303,16 @@ cannot see the expected AMD GPU.
 
 These scripts load the Visual Studio environment, find ROCm through
 `python -m rocm_sdk path --root`, select `clang-cl` for both C++ and HIP, build
-for `gfx1201`, and install vLLM into `.venv211` in editable mode.
+for `gfx1201`, and install vLLM into `.venv-rocm10` in editable mode.
 
 Verify the install without loading a model:
 
 ```powershell
-.\.venv211\Scripts\python.exe -c "import vllm; print(vllm.__version__)"
+New-Item -ItemType Directory -Path .\logs -Force | Out-Null
+.\vram_guard.ps1 `
+  -LimitGiB 8 -WarnGiB 6 -StallSec 90 `
+  -StallLogPath .\logs\verify-runtime.log `
+  -Command '".\.venv-rocm10\Scripts\python.exe" ".\tools\verify_windows_rocm_runtime.py" --expected-arch gfx1201 > ".\logs\verify-runtime.log" 2>&1'
 ```
 
 ## Choosing and downloading a model
@@ -289,14 +334,14 @@ Download a small public model:
 
 ```powershell
 New-Item -ItemType Directory -Path C:\AI\models -Force | Out-Null
-.\.venv211\Scripts\hf.exe download Qwen/Qwen3-0.6B `
+.\.venv-rocm10\Scripts\hf.exe download Qwen/Qwen3-0.6B `
   --local-dir C:\AI\models\Qwen3-0.6B
 ```
 
 Download the tested larger model without its duplicate reference directories:
 
 ```powershell
-.\.venv211\Scripts\hf.exe download openai/gpt-oss-20b `
+.\.venv-rocm10\Scripts\hf.exe download openai/gpt-oss-20b `
   --local-dir C:\AI\models\gpt-oss-20b `
   --exclude "original/*" "metal/*"
 ```
@@ -305,7 +350,7 @@ For a gated model, authenticate interactively instead of placing a Hugging
 Face token in a script or command line:
 
 ```powershell
-.\.venv211\Scripts\hf.exe auth login
+.\.venv-rocm10\Scripts\hf.exe auth login
 ```
 
 The token is stored in the user's Hugging Face cache, outside this repository.
@@ -485,6 +530,23 @@ Explicit command-line flags take precedence over these variables.
 > spill GPU allocations into shared system memory before an ordinary CUDA/HIP
 > free-memory query looks obviously wrong. Keep real dedicated-VRAM headroom.
 
+### Hang scope and recovery
+
+The watchdog is a best-effort user-mode safeguard. It bounds its own Windows
+performance-counter and process queries, detects missing log progress, and can
+terminate only the process tree it launched. It cannot guarantee recovery from
+a kernel-mode AMD driver, HIP runtime, firmware, PCIe, or desktop compositor
+hang. No user-space script can make that guarantee.
+
+Save other work and close GPU-heavy applications before a new build or model
+test. Do not leave an experimental run unattended. If the console still
+responds, press `Ctrl+C` once and give the launched processes time to exit. If
+only the Windows security screen responds, use `Ctrl+Alt+Delete` and end the
+launched server/build process; reboot if the desktop or driver does not
+recover. After a forced restart, confirm both GPUs appear in Device Manager and
+rerun `setup_windows_rocm.ps1 -PlanOnly` plus the guarded Torch probe before
+continuing. Never terminate unrelated Python processes by name.
+
 ## Useful flags
 
 | Flag | Recommended starting point | Effect |
@@ -506,8 +568,9 @@ On a machine with multiple GPUs, select one before starting vLLM:
 $env:HIP_VISIBLE_DEVICES = '0'
 ```
 
-This does not enable multi-GPU vLLM; it selects the one visible GPU used by the
-single-rank runtime.
+This selects the one visible GPU used by the base Windows port. It does not
+enable multi-GPU by itself; authorized users must install and configure the
+separate transport plugin described above.
 
 ## Measured results
 
@@ -563,20 +626,32 @@ it from Git history.
 
 ## Building for a different AMD architecture
 
-The current `env_windows_rocm.cmd` contains two explicit `gfx1201` settings:
+`setup_windows_rocm.ps1 -GpuArch <target>` selects the matching Torch,
+torchvision, and ROCm SDK `device-<target>` extras; exports one architecture to
+both PyTorch and CMake; and uses a separate environment for nondefault targets.
+Do not copy an extension wheel built for one GFX target to another.
 
-- `PYTORCH_ROCM_ARCH=gfx1201`
-- `-DCMAKE_HIP_ARCHITECTURES=gfx1201`
+| GPU family | Build targets accepted by the setup | Validation status |
+| --- | --- | --- |
+| RDNA2 | `gfx1030` | Build/package selectable; unvalidated here |
+| RDNA3 (including RX 7900 XTX) | `gfx1100`-`gfx1103` | Build/package selectable; unvalidated here |
+| RDNA3.5 | `gfx1150`-`gfx1153` | Build/package selectable; unvalidated here |
+| RDNA4 | `gfx1200`, `gfx1201` | `gfx1201` R9700 build/import/tensor probe validated |
 
-To experiment with another GPU:
+For manual builds, set both variables before calling the checked-in scripts:
 
-1. Find its GFX target in AMD's support matrix or with a working ROCm Torch
-   install.
-2. Install the matching AMD ROCm/PyTorch device wheels. Do not use `gfx120X-all`
-   for an unrelated architecture.
-3. Change both build targets above to the same GFX value.
-4. Delete only the repository's generated build directory, rebuild, and start
-   with a very small model under conservative guard limits.
+```powershell
+$env:VLLM_ROCM_ARCH = 'gfx1100'
+$env:VLLM_VENV = 'C:\AI\vllm\.venv-rocm10-gfx1100'
+.\build_windows_rocm.cmd
+.\install_windows_rocm.cmd
+```
+
+Find the installed card's target in AMD's support matrix or with a matching
+working ROCm Torch package. Start with a very small model and conservative
+guard limits. If changing the architecture in an existing clone, use the
+architecture-specific environment and a fresh generated build directory; do
+not reuse native objects from another target.
 
 Architecture support in a ROCm wheel does not guarantee that every vLLM
 attention or quantization kernel supports that architecture. Treat all targets
@@ -585,8 +660,10 @@ VRAM, and throughput tests.
 
 ## Known limitations and troubleshooting
 
-- **Single GPU only:** Windows ROCm Torch lacks the tested c10d/RCCL stack. The
-  compatibility layer supports rank 0/world size 1 and rejects real peer work.
+- **Base port is single-rank:** this repository does not bundle a Windows
+  c10d/RCCL transport. Install the separately version-pinned multi-GPU plugin
+  for one synchronized Direct-RCCL/D3D12 engine; do not copy its DLLs into this
+  source tree or use it against an arbitrary vLLM commit.
 - **Expected `amdsmi` warning:** Windows has no compatible `amdsmi` package in
   this stack. The port falls back to Torch for device detection and properties.
 - **CMake must be new enough:** the tested HIP + `clang-cl` configuration needs
@@ -619,10 +696,11 @@ VRAM, and throughput tests.
 | `setup_windows_rocm.ps1` | Checks prerequisites, installs the pinned environment, runs guarded GPU probes, builds, and verifies the fork. |
 | `env_windows_rocm.cmd` | Shared Visual Studio, ROCm, compiler, and architecture environment. |
 | `build_windows_rocm.cmd` | Builds vLLM's C++/HIP extensions in place. |
-| `install_windows_rocm.cmd` | Installs this source tree into `.venv211` without replacing ROCm Torch. |
+| `install_windows_rocm.cmd` | Installs this source tree into `.venv-rocm10` without replacing ROCm Torch. |
 | `serve_windows_rocm.cmd` | Runs `vllm serve` with Windows/AMD settings and safe configurable defaults. |
 | `bench_windows_rocm.cmd` | Runs `vllm bench` in the same environment used for serving. |
 | `vram_guard.ps1` | Fail-closed dedicated-VRAM and optional stall watchdog. |
+| `tools/verify_windows_rocm_runtime.py` | Imports every native extension and runs a tiny HIP correctness probe without loading a model. |
 | `quantize_fp8.py` | Optional CPU-side FP8 conversion helper; use a separate quantization environment. |
 | `WINDOWS_ROCM_PERFORMANCE.md` | Reproducible measurements, profiles, and blockers. |
 | `update_windows_rocm.ps1` | Checks for the latest stable upstream tag and safely rebases the Windows patch stack. |
