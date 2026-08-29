@@ -1274,6 +1274,11 @@ class EngineCoreProc(EngineCore):
         # Ensure we can serialize transformer config after spawning
         maybe_register_config_serialize_by_value()
 
+        # Process.terminate() bypasses Python signal handlers on Windows. The
+        # local process manager supplies this spawn-safe event so EngineCore
+        # can take its normal worker and HIP-resource shutdown path first.
+        shutdown_event = kwargs.pop("shutdown_event", None)
+
         engine_core: EngineCoreProc | None = None
         signal_callback: SignalCallback | None = None
         try:
@@ -1335,6 +1340,24 @@ class EngineCoreProc(EngineCore):
 
             signal.signal(signal.SIGTERM, signal_handler)
             signal.signal(signal.SIGINT, signal_handler)
+
+            if shutdown_event is not None:
+
+                def shutdown_event_monitor():
+                    shutdown_event.wait()
+                    if engine_core.shutdown_state == EngineShutdownState.RUNNING:
+                        logger.info(
+                            "[shutdown] EngineCore: cooperative Windows "
+                            "shutdown requested"
+                        )
+                        engine_core.shutdown_state = EngineShutdownState.REQUESTED
+                        signal_callback.trigger()
+
+                threading.Thread(
+                    target=shutdown_event_monitor,
+                    daemon=True,
+                    name="EngineCoreWindowsShutdown",
+                ).start()
 
             engine_core.run_busy_loop()
 

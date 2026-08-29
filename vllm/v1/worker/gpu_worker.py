@@ -1384,7 +1384,7 @@ class Worker(WorkerBase):
         # Release kept-alive cumem pools while the pluggable allocator wrappers
         # and callbacks are still alive, so MemPool teardown is not deferred to
         # interpreter finalization (pytorch/pytorch#145168).
-        if current_platform.is_cuda_alike():
+        if current_platform.is_cuda_alike() and os.name != "nt":
             from vllm.device_allocator.cumem import CuMemAllocator
 
             if CuMemAllocator.instance is not None:
