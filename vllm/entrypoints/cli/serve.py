@@ -5,8 +5,6 @@ import argparse
 import signal
 import time
 
-from vllm.utils.async_utils import run_async
-
 import vllm
 import vllm.envs as envs
 from vllm.entrypoints.cli.types import CLISubcommand
@@ -19,6 +17,7 @@ from vllm.entrypoints.serve.utils.api_utils import VLLM_SUBCMD_PARSER_EPILOG
 from vllm.logger import init_logger
 from vllm.usage.usage_lib import UsageContext
 from vllm.utils.argparse_utils import FlexibleArgumentParser
+from vllm.utils.async_utils import run_async
 from vllm.utils.network_utils import get_tcp_uri
 from vllm.v1.engine.utils import CoreEngineProcManager, launch_core_engines
 from vllm.v1.executor import Executor

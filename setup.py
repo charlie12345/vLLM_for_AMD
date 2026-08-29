@@ -97,9 +97,9 @@ elif not (
         sys.platform,
     )
     VLLM_TARGET_DEVICE = "empty"
-elif (
-    sys.platform.startswith("linux") or sys.platform == "win32"
-) and os.getenv("VLLM_TARGET_DEVICE") is None:
+elif (sys.platform.startswith("linux") or sys.platform == "win32") and os.getenv(
+    "VLLM_TARGET_DEVICE"
+) is None:
     if torch.version.hip is not None:
         VLLM_TARGET_DEVICE = "rocm"
         logger.info("Auto-detected ROCm")

@@ -563,7 +563,9 @@ def _build_functional_collectives() -> types.ModuleType:
     def all_gather_tensor(tensor, gather_dim=0, group=None, tag=""):
         return tensor
 
-    def reduce_scatter_tensor_(tensor, reduceOp="sum", scatter_dim=0, group=None, tag=""):
+    def reduce_scatter_tensor_(
+        tensor, reduceOp="sum", scatter_dim=0, group=None, tag=""
+    ):
         return tensor
 
     def all_to_all_single_(output, input_, *args, **kwargs):
@@ -833,24 +835,71 @@ def _build_rendezvous() -> types.ModuleType:
     return mod
 
 
-_EXPORTS = (
-    "ReduceOp Backend Work ProcessGroup ProcessGroupGloo "
-    "Store PrefixStore TCPStore FileStore "
-    "_world _get_default_timeout _get_default_group _register_process_group "
-    "_unregister_process_group _resolve_process_group "
-    "DistError DistBackendError DistNetworkError DistStoreError "
-    "is_initialized init_process_group destroy_process_group "
-    "new_group split_group new_subgroups_by_enumeration rendezvous "
-    "get_rank get_world_size get_backend get_process_group_ranks "
-    "get_group_rank get_global_rank is_backend_available is_gloo_available "
-    "is_nccl_available is_mpi_available is_ucc_available is_xccl_available "
-    "is_torchelastic_launched supports_complex "
-    "barrier monitored_barrier all_reduce reduce broadcast all_gather "
-    "all_gather_into_tensor gather scatter reduce_scatter "
-    "reduce_scatter_tensor all_to_all_single all_to_all all_gather_object "
-    "gather_object scatter_object_list broadcast_object_list "
-    "send recv isend irecv batch_isend_irecv P2POp"
-).split()
+_EXPORTS = [
+    "ReduceOp",
+    "Backend",
+    "Work",
+    "ProcessGroup",
+    "ProcessGroupGloo",
+    "Store",
+    "PrefixStore",
+    "TCPStore",
+    "FileStore",
+    "_world",
+    "_get_default_timeout",
+    "_get_default_group",
+    "_register_process_group",
+    "_unregister_process_group",
+    "_resolve_process_group",
+    "DistError",
+    "DistBackendError",
+    "DistNetworkError",
+    "DistStoreError",
+    "is_initialized",
+    "init_process_group",
+    "destroy_process_group",
+    "new_group",
+    "split_group",
+    "new_subgroups_by_enumeration",
+    "rendezvous",
+    "get_rank",
+    "get_world_size",
+    "get_backend",
+    "get_process_group_ranks",
+    "get_group_rank",
+    "get_global_rank",
+    "is_backend_available",
+    "is_gloo_available",
+    "is_nccl_available",
+    "is_mpi_available",
+    "is_ucc_available",
+    "is_xccl_available",
+    "is_torchelastic_launched",
+    "supports_complex",
+    "barrier",
+    "monitored_barrier",
+    "all_reduce",
+    "reduce",
+    "broadcast",
+    "all_gather",
+    "all_gather_into_tensor",
+    "gather",
+    "scatter",
+    "reduce_scatter",
+    "reduce_scatter_tensor",
+    "all_to_all_single",
+    "all_to_all",
+    "all_gather_object",
+    "gather_object",
+    "scatter_object_list",
+    "broadcast_object_list",
+    "send",
+    "recv",
+    "isend",
+    "irecv",
+    "batch_isend_irecv",
+    "P2POp",
+]
 
 # Aliases for store types vLLM names but never needs a real implementation of.
 TCPStore = Store

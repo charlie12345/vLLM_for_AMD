@@ -19,12 +19,12 @@ from multiprocessing.process import BaseProcess
 import aiohttp
 import psutil
 import uvicorn
-from vllm.utils.async_utils import run_async
 from fastapi import FastAPI, Response
 
 import vllm.envs as envs
 from vllm.entrypoints.launcher import NoSignalServer
 from vllm.logger import init_logger
+from vllm.utils.async_utils import run_async
 from vllm.utils.system_utils import (
     decorate_logs,
     kill_process_tree,

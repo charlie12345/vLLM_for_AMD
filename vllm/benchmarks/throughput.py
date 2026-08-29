@@ -11,7 +11,6 @@ import warnings
 from typing import Any
 
 import torch
-from vllm.utils.async_utils import run_async
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, PreTrainedTokenizerBase
 
@@ -31,7 +30,7 @@ from vllm.platforms import current_platform
 from vllm.sampling_params import BeamSearchParams
 from vllm.tokenizers import TokenizerLike, get_tokenizer
 from vllm.utils.argparse_utils import FlexibleArgumentParser
-from vllm.utils.async_utils import merge_async_iterators
+from vllm.utils.async_utils import merge_async_iterators, run_async
 
 
 def run_vllm(
