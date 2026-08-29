@@ -75,11 +75,18 @@ function ConvertTo-StableVersion([string]$Tag) {
 }
 
 function Get-StableTagNamesFromUpstream {
-    $lines = @(Invoke-Git @(
-        'ls-remote', '--tags', '--refs', $UpstreamUrl, 'v*'
-    ))
+    # Do not pass a wildcard ref pattern here. On GitHub's Linux runner the
+    # native-command argument path returned no matching lines even though the
+    # same invocation worked on Windows. Listing tag refs and filtering them
+    # in PowerShell behaves consistently on both platforms.
+    $lines = @(& $Git -C $Root ls-remote --tags --refs $UpstreamUrl)
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        throw "git ls-remote --tags --refs $UpstreamUrl failed with exit code $exitCode."
+    }
+
     $tags = foreach ($line in $lines) {
-        if ($line -match 'refs/tags/(?<Tag>v\d+\.\d+\.\d+)$') {
+        if ($line -match '\srefs/tags/(?<Tag>v\d+\.\d+\.\d+)$') {
             $Matches.Tag
         }
     }
@@ -105,7 +112,9 @@ function Write-UpdateState(
 }
 
 function Update-BaseMetadata([string]$Tag) {
-    $commit = (Invoke-Git @('rev-parse', $Tag))[0]
+    # A PowerShell function unwraps a one-element array to a scalar string.
+    # Wrap the result again before indexing, or [0] returns the first character.
+    $commit = (@(Invoke-Git @('rev-parse', $Tag)))[0]
     $shortCommit = $commit.Substring(0, 7)
     $utf8 = [Text.UTF8Encoding]::new($false)
 
@@ -176,7 +185,9 @@ if ($CheckOnly -or -not $updateAvailable) {
     exit 0
 }
 
-$branch = (Invoke-Git @('symbolic-ref', '--quiet', '--short', 'HEAD'))[0]
+$branch = (@(Invoke-Git @(
+    'symbolic-ref', '--quiet', '--short', 'HEAD'
+)))[0]
 if (-not $branch) {
     throw 'Check out a local branch before applying an update.'
 }
