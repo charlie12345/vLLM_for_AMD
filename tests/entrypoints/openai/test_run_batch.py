@@ -21,7 +21,6 @@ from vllm.entrypoints.openai.run_batch import (
     download_bytes_from_url,
     make_transcription_wrapper,
 )
-from vllm.exceptions import VLLMValidationError
 from vllm.utils.mem_constants import MiB_bytes
 
 CHAT_MODEL_NAME = "hmellor/tiny-random-LlamaForCausalLM"

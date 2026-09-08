@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# mypy: disable-error-code="attr-defined,method-assign"
 """A single-rank stand-in for ``torch.distributed``.
 
 Some PyTorch builds ship without the c10d extension. The AMD ROCm wheels for
