@@ -31,16 +31,17 @@ jobs:
         run: |
           $state = @{}
           .\update_windows_rocm.ps1 -CheckOnly | ForEach-Object {
-            if ($_ -match '^(CURRENT_BASE|LATEST_STABLE|UPDATE_AVAILABLE)=(.+)$') {
+            if ($_ -match '^(CURRENT_BASE|LATEST_STABLE|UPDATE_AVAILABLE|PATCH_STACK_LINEAR)=(.+)$') {
               $state[$Matches[1]] = $Matches[2]
             }
           }
           "current=$($state.CURRENT_BASE)" >> $env:GITHUB_OUTPUT
           "latest=$($state.LATEST_STABLE)" >> $env:GITHUB_OUTPUT
           "available=$($state.UPDATE_AVAILABLE)" >> $env:GITHUB_OUTPUT
+          "linear=$($state.PATCH_STACK_LINEAR)" >> $env:GITHUB_OUTPUT
 
       - name: Rebase the patch stack
-        if: steps.check.outputs.available == 'true'
+        if: steps.check.outputs.available == 'true' && steps.check.outputs.linear == 'true'
         id: rebase
         shell: pwsh
         run: |
@@ -92,9 +93,15 @@ jobs:
         run: |
           $target = '${{ steps.check.outputs.latest }}'
           $title = "Resolve Windows ROCm update to $target"
+          $linear = '${{ steps.check.outputs.linear }}'
+          $body = if ($linear -eq 'true') {
+            "The scheduled stable-tag rebase found conflicts. Run ``.\update_windows_rocm.ps1 -TargetTag $target`` locally, resolve and validate the patch stack, then open an update PR."
+          } else {
+            "The Windows patch stack contains merge commits, so the updater refused to risk replaying upstream changes as Windows patches. Create a clean linear patch-stack branch locally, run ``.\update_windows_rocm.ps1 -TargetTag $target``, validate it, then open an update PR."
+          }
           $existing = gh issue list --state open --search "$title in:title" --json number --jq '.[0].number'
           if (-not $existing) {
             gh issue create `
               --title $title `
-              --body "The scheduled stable-tag rebase found conflicts. Run ``.\update_windows_rocm.ps1 -TargetTag $target`` locally, resolve and validate the patch stack, then open an update PR."
+              --body $body
           }

@@ -7,7 +7,13 @@ setlocal
 set "ROCM_VLLM_ROOT=%~dp0"
 if not "%VLLM_ROOT%"=="" set "ROCM_VLLM_ROOT=%VLLM_ROOT%"
 set "VLLM_ROOT="
-set "VENV=%ROCM_VLLM_ROOT%.venv211"
+set "VENV=%VLLM_VENV%"
+if not defined VENV set "VENV=%ROCM_VLLM_ROOT%.venv-rocm10"
+if not exist "%VENV%\Scripts\python.exe" (
+  echo ERROR: Windows ROCm environment not found at "%VENV%".
+  echo Run setup_windows_rocm.ps1 or set VLLM_VENV to the environment path.
+  exit /b 1
+)
 
 set TORCH_BLAS_PREFER_HIPBLASLT=1
 set VLLM_WORKER_MULTIPROC_METHOD=spawn
@@ -31,7 +37,7 @@ if errorlevel 1 (
   set "ROCM_MEM_ARG="
 )
 
-REM v0.27's upstream 8192-token compile warmup can transiently consume nearly
+REM The upstream 8192-token compile warmup can transiently consume nearly
 REM all dedicated VRAM even with a conservative KV-cache fraction.
 if "%WINDOWS_ROCM_MAX_NUM_BATCHED_TOKENS%"=="" set WINDOWS_ROCM_MAX_NUM_BATCHED_TOKENS=2048
 echo %* | findstr /C:"max-num-batched-tokens" >nul

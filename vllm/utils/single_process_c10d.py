@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# mypy: disable-error-code="attr-defined,method-assign"
 """A single-rank stand-in for ``torch.distributed``.
 
 Some PyTorch builds ship without the c10d extension. The AMD ROCm wheels for
@@ -266,6 +267,11 @@ def _no_peer(op: str):
     )
 
 
+def _require_local_rank(op: str, rank: int) -> None:
+    if rank != _RANK:
+        _no_peer(f"{op}(rank={rank})")
+
+
 def _resolve(group) -> ProcessGroup:
     if group is None:
         if _WORLD is None:
@@ -351,6 +357,8 @@ def new_subgroups_by_enumeration(*args, **kwargs):
 
 
 def rendezvous(url: str, rank: int = -1, world_size: int = -1, **kwargs):
+    if world_size not in (-1, _WORLD_SIZE) or rank not in (-1, _RANK):
+        _no_peer(f"rendezvous(world_size={world_size}, rank={rank})")
     yield Store(), 0, 1
 
 
@@ -437,10 +445,12 @@ def all_reduce(tensor, op=ReduceOp.SUM, group=None, async_op=False, **kwargs):
 
 
 def reduce(tensor, dst, op=ReduceOp.SUM, group=None, async_op=False, **kwargs):
+    _require_local_rank("reduce", dst)
     return _done(async_op)
 
 
 def broadcast(tensor, src=0, group=None, async_op=False, **kwargs):
+    _require_local_rank("broadcast", src)
     return _done(async_op)
 
 
@@ -455,12 +465,14 @@ def all_gather_into_tensor(output_tensor, input_tensor, group=None, async_op=Fal
 
 
 def gather(tensor, gather_list=None, dst=0, group=None, async_op=False, **kwargs):
+    _require_local_rank("gather", dst)
     if gather_list is not None:
         gather_list[0].copy_(tensor)
     return _done(async_op)
 
 
 def scatter(tensor, scatter_list=None, src=0, group=None, async_op=False, **kwargs):
+    _require_local_rank("scatter", src)
     if scatter_list is not None:
         tensor.copy_(scatter_list[0])
     return _done(async_op)
@@ -500,6 +512,7 @@ def all_gather_object(object_list, obj, group=None):
 
 
 def gather_object(obj, object_gather_list=None, dst=0, group=None):
+    _require_local_rank("gather_object", dst)
     if object_gather_list is not None:
         object_gather_list[0] = obj
 
@@ -507,11 +520,13 @@ def gather_object(obj, object_gather_list=None, dst=0, group=None):
 def scatter_object_list(
     scatter_object_output_list, scatter_object_input_list=None, src=0, group=None
 ):
+    _require_local_rank("scatter_object_list", src)
     if scatter_object_input_list is not None:
         scatter_object_output_list[0] = scatter_object_input_list[0]
 
 
 def broadcast_object_list(object_list, src=0, group=None, device=None):
+    _require_local_rank("broadcast_object_list", src)
     return None
 
 
@@ -569,9 +584,11 @@ def _build_functional_collectives() -> types.ModuleType:
         return tensor
 
     def all_to_all_single_(output, input_, *args, **kwargs):
+        output.copy_(input_.reshape(output.shape))
         return output
 
     def broadcast_(tensor, src=0, group=None, tag=""):
+        _require_local_rank("_functional_collectives.broadcast", src)
         return tensor
 
     mod.wait_tensor = wait_tensor
