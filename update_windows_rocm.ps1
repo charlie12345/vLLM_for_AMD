@@ -5,8 +5,8 @@
 .DESCRIPTION
     Finds stable vLLM tags directly from the official upstream repository,
     fetches the selected tag, detects the stable tag at the base of the current
-    patch stack, creates a timestamped backup branch, and rebases the current
-    branch onto the new release.
+    patch stack, verifies that the patch stack is linear, creates a timestamped
+    backup branch, and rebases the current branch onto the new release.
 
     The script never selects release candidates or development tags
     automatically and never pushes or merges. A rebase conflict is left in
@@ -14,8 +14,8 @@
     --abort`.
 
 .PARAMETER CheckOnly
-    Report the current base, latest stable tag, and whether an update is
-    available without rebasing.
+    Report the current base, latest stable tag, whether an update is available,
+    and whether the patch stack is safe to rebase without changing it.
 
 .PARAMETER TargetTag
     Use a specific stable vLLM tag instead of the latest one.
@@ -104,11 +104,13 @@ function Get-NewestStableTag([string[]]$Tags) {
 function Write-UpdateState(
     [string]$CurrentBase,
     [string]$LatestStable,
-    [bool]$UpdateAvailable
+    [bool]$UpdateAvailable,
+    [bool]$PatchStackLinear
 ) {
     Write-Output "CURRENT_BASE=$CurrentBase"
     Write-Output "LATEST_STABLE=$LatestStable"
     Write-Output "UPDATE_AVAILABLE=$($UpdateAvailable.ToString().ToLowerInvariant())"
+    Write-Output "PATCH_STACK_LINEAR=$($PatchStackLinear.ToString().ToLowerInvariant())"
 }
 
 function Update-BaseMetadata([string]$Tag) {
@@ -179,13 +181,27 @@ if (-not $currentBase) {
 $currentVersion = ConvertTo-StableVersion $currentBase
 $selectedVersion = ConvertTo-StableVersion $selectedTag
 $updateAvailable = $selectedVersion -gt $currentVersion
-Write-UpdateState $currentBase $selectedTag $updateAvailable
+$mergeCommits = @(Invoke-Git @(
+    'rev-list', '--min-parents=2', "$currentBase..HEAD"
+))
+$patchStackLinear = $mergeCommits.Count -eq 0
+Write-UpdateState $currentBase $selectedTag $updateAvailable $patchStackLinear
 
 if ($CheckOnly -or -not $updateAvailable) {
     if (-not $updateAvailable) {
         Write-Host "Already based on $currentBase; no stable update is needed." -ForegroundColor Green
     }
     exit 0
+}
+
+if (-not $patchStackLinear) {
+    $firstMerge = $mergeCommits[-1]
+    throw (
+        "The patch stack after $currentBase contains merge commit $firstMerge. " +
+        'Rebasing this non-linear history could replay upstream changes as ' +
+        'Windows patches. Create a clean linear patch-stack branch first; no ' +
+        'branch or working-tree changes were made.'
+    )
 }
 
 $branch = (@(Invoke-Git @(

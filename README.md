@@ -684,7 +684,9 @@ requirements. Check for and apply the latest stable release with:
 The updater ignores prereleases, fetches the selected tag directly from the
 official vLLM repository, creates a timestamped backup branch, and rebases the
 current patch stack. It never pushes or merges. If upstream and Windows changes
-overlap, it stops at the conflict for review.
+overlap, it stops at the conflict for review. It also refuses to rebase a
+non-linear patch stack, because doing so can silently replay already-merged
+upstream commits as Windows-specific changes.
 
 The scheduled `Sync Windows ROCm with upstream vLLM` GitHub workflow performs
 the same check daily. A clean rebase becomes a validation PR; a conflicted
