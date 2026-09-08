@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out the Windows ROCm branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: windows-rocm
           fetch-depth: 0
