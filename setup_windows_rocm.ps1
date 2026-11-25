@@ -102,7 +102,24 @@ $BuildScript = Join-Path $Root 'build_windows_rocm.cmd'
 $InstallScript = Join-Path $Root 'install_windows_rocm.cmd'
 $GuardScript = Join-Path $Root 'vram_guard.ps1'
 $RuntimeVerifier = Join-Path $Root 'tools\verify_windows_rocm_runtime.py'
-$Vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+# vcvars64.bat lives in every Visual Studio 2022 edition, but the installer puts
+# Build Tools under Program Files (x86) and Community/Professional/Enterprise
+# under Program Files. Ask vswhere which installation actually has the C++
+# toolset rather than assuming one edition and one root.
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+$Vcvars = if ($env:VCVARS64) { $env:VCVARS64 } else { $null }
+if (-not $Vcvars -and (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+    $vsRoot = & $vswhere -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationPath
+    if ($vsRoot) {
+        $candidate = Join-Path $vsRoot.Trim() 'VC\Auxiliary\Build\vcvars64.bat'
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $Vcvars = $candidate }
+    }
+}
+if (-not $Vcvars) {
+    $Vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+}
 
 function Write-Step([string]$Message) {
     Write-Host "`n=== $Message ===" -ForegroundColor Cyan
@@ -222,11 +239,14 @@ $git = Get-RequiredApplication 'git' `
 
 if (-not (Test-Path -LiteralPath $Vcvars -PathType Leaf)) {
     throw @"
-Visual Studio 2022 Build Tools was not found at the path expected by
-env_windows_rocm.cmd:
+Visual Studio 2022 (any edition: Build Tools, Community, Professional or
+Enterprise) with the C++ toolset was not found. vswhere reported no installation
+that has Microsoft.VisualStudio.Component.VC.Tools.x86.x64, and the fallback
+path does not exist either:
   $Vcvars
-Install the Desktop development with C++ workload, MSVC v143, and a Windows
-10 or 11 SDK. Reopen PowerShell after installation.
+Install the "Desktop development with C++" workload, MSVC v143, and a Windows
+10 or 11 SDK, or set VCVARS64 to the full path of your vcvars64.bat. Reopen
+PowerShell after installation.
 "@
 }
 
