@@ -26,7 +26,24 @@ REM fail with "was unexpected at this time". Sanitize only this child shell;
 REM this does not modify the persistent Windows PATH.
 set "PATH=%PATH:"=%"
 set "PATH=C:\Program Files (x86)\Microsoft Visual Studio\Installer;%PATH%"
-call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul
+rem vcvars64.bat exists in every Visual Studio 2022 edition, and the installer's
+rem default root depends on the edition (Build Tools lands in Program Files (x86),
+rem Community/Professional/Enterprise in Program Files). Ask vswhere for the
+rem installation that actually has the C++ toolset instead of guessing a root;
+rem the Installer directory was just added to PATH, so vswhere is on it.
+rem An explicit VCVARS64 (Developer Prompt, CI) still wins.
+if not defined VCVARS64 for /f "delims=" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2^>nul') do if exist "%%i\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS64=%%i\VC\Auxiliary\Build\vcvars64.bat"
+rem Fallbacks for the case where vswhere is missing or reports nothing.
+if not defined VCVARS64 if exist "%ProgramFiles%\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS64=%ProgramFiles%\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+if not defined VCVARS64 if exist "%ProgramFiles%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS64=%ProgramFiles%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+if not defined VCVARS64 if exist "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" set "VCVARS64=%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+if not defined VCVARS64 (
+  echo [FAIL] vcvars64.bat not found for any Visual Studio 2022 edition.
+  echo        Install the "Desktop development with C++" workload, or set VCVARS64
+  echo        to the full path of your vcvars64.bat.
+  exit /b 1
+)
+call "%VCVARS64%" >nul
 if errorlevel 1 (echo [FAIL] vcvars64 & exit /b 1)
 
 REM --- ROCm SDK location, from the wheel itself ------------------------
